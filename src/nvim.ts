@@ -8,6 +8,10 @@ export type NvimOptions = {
   nvimPath?: string;
   initLuaPath?: string; // absolute path; if empty, we use plugin's assets/host-init.lua
   pluginDir?: string; // absolute plugin directory path (for defaults)
+  // External attachment instead of spawning
+  externalSocketPath?: string; // If set, attach via unix socket/pipe
+  externalHost?: string; // Host for TCP attach
+  externalPort?: number; // Port for TCP attach
 };
 
 export type RedrawHandler = (method: string, args: any[]) => void;
@@ -43,11 +47,29 @@ export class NvimHost {
     await this.log.init();
     this.log.info("NvimHost.start() begin", { opts: this.opts });
 
+    // External attach mode
+    const useSocket = !!this.opts.externalSocketPath;
+    const useTcp = !!(this.opts.externalHost && this.opts.externalPort);
+    if (useSocket || useTcp) {
+      try {
+        const attachOpts: any = useSocket
+          ? { socket: this.opts.externalSocketPath }
+          : { address: this.opts.externalHost, port: this.opts.externalPort };
+        const client = await attach(attachOpts);
+        this.nvim = client as unknown as NeovimClient;
+        this.log.info("attach() OK (external)");
+      } catch (e) {
+        this.log.error("external attach failed", e);
+        throw e;
+      }
+      this.setupUiNotifications();
+      this.log.info("NvimHost.start() complete (external)");
+      return;
+    }
+
     const nvimPath = this.opts.nvimPath ?? "nvim";
     let initLua = this.opts.initLuaPath;
     if (!initLua) {
-      // Default to the plugin's bundled assets/host-init.lua
-      // pluginDir should be passed in from the plugin entry to avoid vault-root assumptions
       const base = this.opts.pluginDir || ((this.app as any).vault?.adapter?.basePath ?? "");
       initLua = join(base, "assets", "host-init.lua");
     }
@@ -117,6 +139,12 @@ export class NvimHost {
       throw e;
     }
 
+    this.setupUiNotifications();
+
+    this.log.info("NvimHost.start() complete");
+  }
+
+  private setupUiNotifications() {
     this.nvim.on("notification", (method: string, args: any[]) => {
       if (method === "redraw") {
         this.parseRedraw(args);
@@ -150,8 +178,6 @@ export class NvimHost {
         this.log.debug("notification", { method });
       }
     });
-
-    this.log.info("NvimHost.start() complete");
   }
 
   private parseRedraw(batches: any[]) {

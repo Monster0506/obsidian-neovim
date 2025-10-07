@@ -59,7 +59,7 @@ export class SyncApplier {
       const fromLine = clamp(ev.firstline, 0, Math.max(0, lc));
       const toLine = clamp(ev.lastline, 0, Math.max(0, lc));
       const from = { line: fromLine, ch: 0 };
-      const to = toLine < lc ? { line: toLine, ch: 0 } : posAtDocEnd(ed);
+      const to = endPosForExclusiveLineIndex(ed, toLine);
       const insert = ev.linedata.join("\n");
       const ok = this.bridge.replaceRange(from, to, insert);
       this.log.debug("applyEvent", {
@@ -90,5 +90,26 @@ function posAtDocEnd(ed: Editor): { line: number; ch: number } {
     return { line: last, ch: lineText.length };
   } catch {
     return { line: 0, ch: 0 };
+  }
+}
+
+// Convert an exclusive end line index (as provided by Neovim on_lines 'lastline')
+// into a CodeMirror position at the end of the affected content.
+// For 0 <= toLine < lc, we want the end-of-line position of (toLine - 1),
+// because CM replaceRange uses inclusive positions and to={line: toLine, ch:0}
+// would also delete the newline at (toLine - 1).
+function endPosForExclusiveLineIndex(
+  ed: Editor,
+  toLineExclusive: number
+): { line: number; ch: number } {
+  try {
+    const lc = ed.lineCount();
+    if (toLineExclusive <= 0) return { line: 0, ch: 0 };
+    if (toLineExclusive >= lc) return posAtDocEnd(ed);
+    const endLine = toLineExclusive - 1;
+    const text = ed.getLine(endLine) ?? "";
+    return { line: endLine, ch: text.length };
+  } catch {
+    return posAtDocEnd(ed);
   }
 }

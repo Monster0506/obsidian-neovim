@@ -20,7 +20,8 @@ export default class NeovimBackendPlugin extends Plugin {
   settings!: NeovimSettings;
 
   async onload() {
-    this.log = new FileLogger(this.app, PLUGIN_TAG);
+    const pluginDir = (this.manifest as any)?.dir || (this.app as any)?.vault?.adapter?.basePath || "";
+    this.log = new FileLogger(this.app, PLUGIN_TAG, pluginDir);
     await this.log.init();
     this.bridge = new EditorBridge(this.app);
     this.sync = new SyncApplier(this.bridge, this.log);
@@ -87,6 +88,20 @@ export default class NeovimBackendPlugin extends Plugin {
           const p = this.log.getLogFilePath();
           new Notice(`Log: ${p}`);
           this.log.info("Log path requested", { path: p });
+        }
+      });
+
+      this.addCommand({
+        id: "obsidian-neovim-reconnect-external",
+        name: "Reconnect to external Neovim",
+        callback: async () => {
+          try {
+            await this.restartNvim();
+            new Notice("Reconnected to Neovim");
+          } catch (e) {
+            this.log.error("Reconnect error", e);
+            new Notice("Failed to reconnect (see log file)");
+          }
         }
       });
 
@@ -243,7 +258,10 @@ export default class NeovimBackendPlugin extends Plugin {
         {
           nvimPath: this.settings.nvimPath || "nvim",
           initLuaPath: this.settings.initLuaPath || "",
-          pluginDir: (this.manifest as any)?.dir || (this.app as any)?.vault?.adapter?.basePath || ""
+          pluginDir: (this.manifest as any)?.dir || (this.app as any)?.vault?.adapter?.basePath || "",
+          externalSocketPath: this.settings.useExternal ? (this.settings.externalSocketPath || undefined) : undefined,
+          externalHost: this.settings.useExternal ? (this.settings.externalHost || undefined) : undefined,
+          externalPort: this.settings.useExternal ? (this.settings.externalPort || undefined) : undefined,
         },
         this.log
       );
@@ -371,6 +389,58 @@ class NeovimSettingsTab extends PluginSettingTab {
           .setValue(this.plugin.settings.initLuaPath)
           .onChange(async (value) => {
             this.plugin.settings.initLuaPath = value.trim();
+            await this.plugin.saveData(this.plugin.settings);
+          });
+      });
+
+    containerEl.createEl("h3", { text: "External Neovim (--listen)" });
+
+    new Setting(containerEl)
+      .setName("Attach to external Neovim")
+      .setDesc("If enabled, connect to a running nvim --listen instead of spawning.")
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.settings.useExternal).onChange(async (v) => {
+          this.plugin.settings.useExternal = v;
+          await this.plugin.saveData(this.plugin.settings);
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Socket path")
+      .setDesc("UNIX socket/pipe path for --listen (optional)")
+      .addText((text) => {
+        text
+          .setPlaceholder("/tmp/nvim-remote-socket")
+          .setValue(this.plugin.settings.externalSocketPath)
+          .onChange(async (value) => {
+            this.plugin.settings.externalSocketPath = value.trim();
+            await this.plugin.saveData(this.plugin.settings);
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("Host")
+      .setDesc("TCP host for --listen (optional)")
+      .addText((text) => {
+        text
+          .setPlaceholder("127.0.0.1")
+          .setValue(this.plugin.settings.externalHost)
+          .onChange(async (value) => {
+            this.plugin.settings.externalHost = value.trim();
+            await this.plugin.saveData(this.plugin.settings);
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("Port")
+      .setDesc("TCP port for --listen (optional)")
+      .addText((text) => {
+        text
+          .setPlaceholder("8000")
+          .setValue(String(this.plugin.settings.externalPort))
+          .onChange(async (value) => {
+            const n = Number(value);
+            this.plugin.settings.externalPort = Number.isFinite(n) ? n : this.plugin.settings.externalPort;
             await this.plugin.saveData(this.plugin.settings);
           });
       });

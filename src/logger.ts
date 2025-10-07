@@ -12,12 +12,14 @@ export class FileLogger {
   private queue: string[] = [];
   private writing = false;
 
-  constructor(private app: App, private tag = "[obsidian-neovim]") {
-    const base =
+  constructor(private app: App, private tag = "[obsidian-neovim]", private pluginDir?: string) {
+    const vaultBase =
       (this.app as any)?.vault?.adapter?.basePath ||
       (this.app as any)?.vault?.getBasePath?.() ||
       "";
-    this.logDir = join(base, "obsidian-neovim-logs");
+    const base = vaultBase || this.pluginDir || "";
+    // Prefer vault logs dir; if vaultBase missing, fall back to plugin runtimelogs
+    this.logDir = vaultBase ? join(base, "obsidian-neovim-logs") : join(base, "runtimelogs");
     const stamp = new Date();
     const y = String(stamp.getFullYear());
     const m = String(stamp.getMonth() + 1).padStart(2, "0");

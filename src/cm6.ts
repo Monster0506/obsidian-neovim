@@ -153,6 +153,12 @@ export function neovimExtension(nvim: NvimHost): Extension {
   const domHandlers = EditorView.domEventHandlers({
     keydown: (e, _view) => {
       try {
+        // Always let Ctrl+Shift+P go to Obsidian's command palette
+        if (e.ctrlKey && e.shiftKey && (e.key === "P" || e.key === "p")) {
+          log(nvim, "debug", "bypass Neovim: Ctrl+Shift+P");
+          return false; // don't prevent; allow Obsidian
+        }
+
         const term = translateKey(e);
         if (!term) return false;
 
