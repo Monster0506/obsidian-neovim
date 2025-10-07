@@ -4,7 +4,7 @@ export interface NeovimSettings {
   initLuaPath: string; // Path to init script; empty = plugin default
   // External attach (non-headless visible Neovim via --listen)
   useExternal: boolean; // if true, attach instead of spawn
-  externalSocketPath: string; // e.g., /tmp/nvim-remote-socket
+  externalSocketPath: string; // e.g., /tmp/nvim-obsidian.sock
   externalHost: string; // e.g., 127.0.0.1
   externalPort: number; // e.g., 8000
 }

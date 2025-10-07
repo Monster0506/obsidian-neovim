@@ -1,4 +1,5 @@
 import { Plugin, Notice, PluginSettingTab, App, Setting } from "obsidian";
+import { join } from "path";
 import { NvimHost } from "@src/nvim";
 import { neovimExtension } from "@src/cm6";
 import { FileLogger } from "@src/logger";
@@ -18,10 +19,18 @@ export default class NeovimBackendPlugin extends Plugin {
   private sync!: SyncApplier;
   private attachedBuf: number | null = null;
   settings!: NeovimSettings;
+  private pluginDir!: string;
+  private lastFallbackSyncTs = 0;
+  private pendingFallback = false;
+  private inputSyncThrottled = false;
 
   async onload() {
-    const pluginDir = (this.manifest as any)?.dir || (this.app as any)?.vault?.adapter?.basePath || "";
-    this.log = new FileLogger(this.app, PLUGIN_TAG, pluginDir);
+    const vaultBase =
+      (this.app as any)?.vault?.adapter?.basePath ||
+      (this.app as any)?.vault?.getBasePath?.() ||
+      "";
+    this.pluginDir = join(vaultBase, ".obsidian", "plugins", this.manifest.id);
+    this.log = new FileLogger(this.app, PLUGIN_TAG, this.pluginDir);
     await this.log.init();
     this.bridge = new EditorBridge(this.app);
     this.sync = new SyncApplier(this.bridge, this.log);
@@ -117,6 +126,8 @@ export default class NeovimBackendPlugin extends Plugin {
         try {
           const head = Array.isArray(args) && args.length > 0 ? args[0] : "(empty)";
           this.log.debug(`onRedraw: ${method}`, head);
+          // Fallback sync while in insert mode: sometimes on_lines may not arrive via buf_attach
+          this.maybeScheduleFallbackSync();
         } catch (e) {
           this.log.error("onRedraw handler error", e);
         }
@@ -205,6 +216,11 @@ export default class NeovimBackendPlugin extends Plugin {
         try {
           this.tryRegisterCmExtension();
           void this.syncActiveEditorToNvim();
+          // Listen for key-driven sync triggers
+          this.registerDomEvent(window, "obsidian-neovim-input" as any, () => {
+            this.log.debug("obsidian-neovim-input event");
+            this.handleKeyDrivenSync();
+          });
         } catch (e) {
           this.log.error("initial attempt error", e);
         }
@@ -258,7 +274,7 @@ export default class NeovimBackendPlugin extends Plugin {
         {
           nvimPath: this.settings.nvimPath || "nvim",
           initLuaPath: this.settings.initLuaPath || "",
-          pluginDir: (this.manifest as any)?.dir || (this.app as any)?.vault?.adapter?.basePath || "",
+          pluginDir: this.pluginDir,
           externalSocketPath: this.settings.useExternal ? (this.settings.externalSocketPath || undefined) : undefined,
           externalHost: this.settings.useExternal ? (this.settings.externalHost || undefined) : undefined,
           externalPort: this.settings.useExternal ? (this.settings.externalPort || undefined) : undefined,
@@ -344,6 +360,75 @@ export default class NeovimBackendPlugin extends Plugin {
       throw e;
     }
   }
+
+  private maybeScheduleFallbackSync() {
+    try {
+      const mode = this.nvim.getMode();
+      if (mode !== "insert") return;
+      const now = Date.now();
+      // throttle to ~20 Hz max
+      if (this.pendingFallback || now - this.lastFallbackSyncTs < 50) return;
+      this.pendingFallback = true;
+      setTimeout(async () => {
+        try {
+          const ed = getActiveEditor(this.app);
+          if (!ed) return;
+          const nvimText = await this.nvim.getBufferText();
+          const obsidianText = ed.getValue();
+          if (typeof nvimText === "string" && nvimText !== obsidianText) {
+            ed.setValue(nvimText);
+            this.log.debug("fallback sync applied", { len: nvimText.length });
+          }
+        } catch (e) {
+          this.log.warn("fallback sync error", { err: (e as any)?.message ?? String(e) });
+        } finally {
+          this.lastFallbackSyncTs = Date.now();
+          this.pendingFallback = false;
+        }
+      }, 0);
+    } catch (e) {
+      this.log.warn("maybeScheduleFallbackSync error", { err: (e as any)?.message ?? String(e) });
+    }
+  }
+
+  private handleKeyDrivenSync() {
+    try {
+      if (this.inputSyncThrottled) return;
+      this.inputSyncThrottled = true;
+      // Throttle to ~30 Hz
+      setTimeout(async () => {
+        try {
+          const ed = getActiveEditor(this.app);
+          if (!ed) return;
+          this.log.debug("key-sync tick");
+          const text = await this.nvim.getBufferText();
+          if (typeof text === "string" && text.length > 0) {
+            if (text !== ed.getValue()) {
+              ed.setValue(text);
+              this.log.debug("key-sync applied", { len: text.length });
+            }
+          }
+          // Always try cursor sync on key events
+          try {
+            const pos = await this.nvim.getCursor();
+            const lc = ed.lineCount();
+            const line = Math.max(0, Math.min(pos.line, Math.max(0, lc - 1)));
+            const lineText = ed.getLine(line) ?? "";
+            const ch = Math.max(0, Math.min(pos.col, lineText.length));
+            ed.setCursor({ line, ch });
+          } catch (e) {
+            this.log.warn("key-sync cursor error", { err: (e as any)?.message ?? String(e) });
+          }
+        } catch (e) {
+          this.log.warn("key-sync error", { err: (e as any)?.message ?? String(e) });
+        } finally {
+          this.inputSyncThrottled = false;
+        }
+      }, 33);
+    } catch (e) {
+      this.log.warn("handleKeyDrivenSync error", { err: (e as any)?.message ?? String(e) });
+    }
+  }
 }
 
 class NeovimSettingsTab extends PluginSettingTab {
@@ -410,7 +495,7 @@ class NeovimSettingsTab extends PluginSettingTab {
       .setDesc("UNIX socket/pipe path for --listen (optional)")
       .addText((text) => {
         text
-          .setPlaceholder("/tmp/nvim-remote-socket")
+          .setPlaceholder("/tmp/nvim-obsidian.sock")
           .setValue(this.plugin.settings.externalSocketPath)
           .onChange(async (value) => {
             this.plugin.settings.externalSocketPath = value.trim();

@@ -136,7 +136,14 @@ export function neovimExtension(nvim: NvimHost): Extension {
         .then(() => log(nvim, "debug", "nvim.input ok", { key }))
         .catch((e) =>
           log(nvim, "warn", "nvim.input failed", { key, err: e?.message ?? String(e) })
-        );
+        )
+        .finally(() => {
+          try {
+            window.dispatchEvent(
+              new CustomEvent("obsidian-neovim-input", { detail: { term: key } })
+            );
+          } catch {}
+        });
       return true;
     };
   }
@@ -147,7 +154,9 @@ export function neovimExtension(nvim: NvimHost): Extension {
     { key: "j", run: routeSimple("j") },
     { key: "k", run: routeSimple("k") },
     { key: "l", run: routeSimple("l") },
-    { key: "i", run: routeSimple("i") }
+    { key: "i", run: routeSimple("i") },
+    { key: "Backspace", run: routeSimple("<BS>") },
+    { key: "Delete", run: routeSimple("<Del>") }
   ]);
 
   const domHandlers = EditorView.domEventHandlers({
@@ -169,7 +178,9 @@ export function neovimExtension(nvim: NvimHost): Extension {
           term === "k" ||
           term === "l" ||
           term === "i" ||
-          term === "<Esc>"
+          term === "<Esc>" ||
+          term === "<BS>" ||
+          term === "<Del>"
         ) {
           return false;
         }
@@ -187,7 +198,14 @@ export function neovimExtension(nvim: NvimHost): Extension {
               term,
               err: err?.message ?? String(err)
             })
-          );
+          )
+          .finally(() => {
+            try {
+              window.dispatchEvent(
+                new CustomEvent("obsidian-neovim-input", { detail: { term } })
+              );
+            } catch {}
+          });
         return true;
       } catch (err) {
         log(nvim, "error", "keydown handler error", {

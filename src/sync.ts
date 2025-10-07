@@ -59,7 +59,9 @@ export class SyncApplier {
       const fromLine = clamp(ev.firstline, 0, Math.max(0, lc));
       const toLine = clamp(ev.lastline, 0, Math.max(0, lc));
       const from = { line: fromLine, ch: 0 };
-      const to = endPosForExclusiveLineIndex(ed, toLine);
+      const to = toLine <= fromLine
+        ? { line: fromLine, ch: 0 }
+        : endPosForExclusiveLineIndex(ed, toLine);
       const insert = ev.linedata.join("\n");
       const ok = this.bridge.replaceRange(from, to, insert);
       this.log.debug("applyEvent", {

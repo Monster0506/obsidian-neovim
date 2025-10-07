@@ -307,6 +307,24 @@ export class NvimHost {
     ])) as [number, number];
     return { line: Math.max(0, (line1 ?? 1) - 1), col: Math.max(0, col ?? 0) };
   }
+
+  async getBufferText(buf?: number): Promise<string> {
+    try {
+      const target = buf ?? this.currentBuf ?? (await this.getCurrentBuf());
+      const lines = (await this.nvim.request("nvim_buf_get_lines", [
+        target,
+        0,
+        -1,
+        false
+      ])) as string[];
+      return (lines ?? []).join("\n");
+    } catch (e) {
+      this.log.warn("nvim_buf_get_lines failed", {
+        err: (e as any)?.message ?? String(e)
+      });
+      return "";
+    }
+  }
 }
 
 function escapeVimPath(p: string) {

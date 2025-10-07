@@ -34,6 +34,16 @@ export class EditorBridge {
     }
   }
 
+  getValue(): string | null {
+    const ed = this.getActiveEditor();
+    if (!ed) return null;
+    try {
+      return ed.getValue();
+    } catch {
+      return null;
+    }
+  }
+
   getLine(line: number): string | null {
     const ed = this.getActiveEditor();
     if (!ed) return null;

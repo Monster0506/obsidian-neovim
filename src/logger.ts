@@ -13,13 +13,13 @@ export class FileLogger {
   private writing = false;
 
   constructor(private app: App, private tag = "[obsidian-neovim]", private pluginDir?: string) {
-    const vaultBase =
+    // Always prefer writing logs under the plugin directory to ensure availability
+    // e.g., <vault>/.obsidian/plugins/<id>/runtimelogs
+    const base = this.pluginDir ||
       (this.app as any)?.vault?.adapter?.basePath ||
       (this.app as any)?.vault?.getBasePath?.() ||
       "";
-    const base = vaultBase || this.pluginDir || "";
-    // Prefer vault logs dir; if vaultBase missing, fall back to plugin runtimelogs
-    this.logDir = vaultBase ? join(base, "obsidian-neovim-logs") : join(base, "runtimelogs");
+    this.logDir = join(base, "runtimelogs");
     const stamp = new Date();
     const y = String(stamp.getFullYear());
     const m = String(stamp.getMonth() + 1).padStart(2, "0");
