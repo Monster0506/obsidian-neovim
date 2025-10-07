@@ -1,6 +1,10 @@
 {
   "compilerOptions": {
     "baseUrl": ".",
+    "paths": {
+      "@src/*": ["src/*"]
+    },
+    "types": ["node", "obsidian"],
     "inlineSourceMap": true,
     "inlineSources": true,
     "module": "ESNext",
@@ -11,14 +15,8 @@
     "importHelpers": true,
     "isolatedModules": true,
     "strictNullChecks": true,
-    "lib": [
-      "DOM",
-      "ES5",
-      "ES6",
-      "ES7"
-    ]
+    "skipLibCheck": true,
+    "lib": ["DOM", "ES5", "ES6", "ES7"]
   },
-  "include": [
-    "**/*.ts"
-  ]
+  "include": ["src/**/*.ts", "esbuild.config.mjs", "version-bump.mjs"]
 }
