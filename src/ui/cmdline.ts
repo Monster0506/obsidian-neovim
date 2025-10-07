@@ -50,6 +50,23 @@ export class CommandLineModal extends Modal {
     });
   }
 
+  // Optimistic local echo while modal is open: update text first, then send to Neovim
+  previewInsert(chars: string) {
+    if (!chars) return;
+    this.lastContent =
+      this.lastContent.slice(0, this.lastPos) + chars + this.lastContent.slice(this.lastPos);
+    this.lastPos += chars.length;
+    this.render();
+  }
+
+  previewBackspace() {
+    if (this.lastPos <= 0) return;
+    this.lastContent =
+      this.lastContent.slice(0, this.lastPos - 1) + this.lastContent.slice(this.lastPos);
+    this.lastPos -= 1;
+    this.render();
+  }
+
   private render() {
     if (!this.promptEl || !this.inputEl) return;
     this.promptEl.textContent = this.lastPrompt;

@@ -26,6 +26,7 @@ export default class NeovimBackendPlugin extends Plugin {
   private inputSyncThrottled = false;
   // Note: Visual selection sync attempts removed for now; see syncVisualSelection()
   private cmdline?: CommandLineModal;
+  private cmdPollId: number | null = null;
 
   async onload() {
     const vaultBase =
@@ -35,6 +36,74 @@ export default class NeovimBackendPlugin extends Plugin {
     this.pluginDir = join(vaultBase, ".obsidian", "plugins", this.manifest.id);
     this.log = new FileLogger(this.app, PLUGIN_TAG, this.pluginDir);
     await this.log.init();
+    try {
+      new Notice("obsidian-neovim onload reached");
+    } catch {}
+    try {
+      // Minimal always-on overlay logger for sanity checks
+      const w: any = window as any;
+      if (!w.__nvimOverlay) {
+        const ol = document.createElement("div");
+        ol.style.cssText =
+          "position:fixed;right:8px;bottom:8px;max-width:40vw;max-height:35vh;z-index:999999;background:#000c;color:#9cf;border:1px solid #224;padding:6px;font:12px/1.3 monospace;opacity:.95;backdrop-filter: blur(2px);display:flex;flex-direction:column;gap:6px";
+
+        const toolbar = document.createElement("div");
+        toolbar.style.cssText = "display:flex;gap:6px;align-items:center;justify-content:space-between";
+        const title = document.createElement("span");
+        title.textContent = "obsidian-neovim overlay logger";
+        title.style.cssText = "color:#7fb;opacity:.9";
+        const btns = document.createElement("div");
+        btns.style.cssText = "display:flex;gap:6px";
+        const copyBtn = document.createElement("button");
+        copyBtn.textContent = "Copy all";
+        copyBtn.style.cssText = "background:#123;color:#9cf;border:1px solid #246;padding:2px 6px;border-radius:4px;cursor:pointer";
+        const clearBtn = document.createElement("button");
+        clearBtn.textContent = "Clear";
+        clearBtn.style.cssText = "background:#123;color:#9cf;border:1px solid #246;padding:2px 6px;border-radius:4px;cursor:pointer";
+        btns.appendChild(copyBtn);
+        btns.appendChild(clearBtn);
+        toolbar.appendChild(title);
+        toolbar.appendChild(btns);
+
+        const content = document.createElement("pre");
+        content.style.cssText = "margin:0;white-space:pre-wrap;overflow:auto;flex:1;user-select:text";
+        content.textContent = "overlay initialized\n";
+
+        copyBtn.onclick = async () => {
+          const text = content.textContent ?? "";
+          try {
+            if (navigator?.clipboard?.writeText) {
+              await navigator.clipboard.writeText(text);
+            } else {
+              const ta = document.createElement("textarea");
+              ta.value = text;
+              ta.style.position = "fixed";
+              ta.style.opacity = "0";
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand("copy");
+              document.body.removeChild(ta);
+            }
+          } catch {}
+        };
+        clearBtn.onclick = () => {
+          content.textContent = "";
+        };
+
+        ol.appendChild(toolbar);
+        ol.appendChild(content);
+        document.body.appendChild(ol);
+        w.__nvimOverlay = ol;
+        w.__nvimLog = (t: any) => {
+          try {
+            const s = typeof t === "string" ? t : JSON.stringify(t);
+            content.textContent += s + "\n";
+            content.scrollTop = content.scrollHeight;
+          } catch {}
+        };
+      }
+      (window as any).__nvimLog?.("onload: begin");
+    } catch {}
     this.bridge = new EditorBridge(this.app);
     this.sync = new SyncApplier(this.bridge, this.log);
 
@@ -98,8 +167,10 @@ export default class NeovimBackendPlugin extends Plugin {
         name: "Show log file path",
         callback: () => {
           const p = this.log.getLogFilePath();
-          new Notice(`Log: ${p}`);
-          this.log.info("Log path requested", { path: p });
+          const tmp = this.log.getTmpLogFilePath?.() ?? "(no tmp)";
+          const ls = this.log.getLocalStorageKey?.() ?? "(no storage)";
+          new Notice(`Log: ${p}\nTmp: ${tmp}\nStorageKey: ${ls}\nUse: View → Toggle Developer Tools (Console)\nOr run: window.addEventListener('obsidian-neovim-log', e => console.log(e.detail.chunk))`);
+          this.log.info("Log path requested", { path: p, tmp, storageKey: ls });
         }
       });
 
@@ -119,44 +190,61 @@ export default class NeovimBackendPlugin extends Plugin {
 
       if (this.settings.enabled) {
         await this.startNvim();
+        (window as any).__nvimLog?.("nvim: started");
       } else {
         this.log.info("Plugin disabled via settings; not starting Neovim");
+        (window as any).__nvimLog?.("plugin disabled via settings");
       }
 
       // Redraw hookup (mode logs handled in NvimHost)
-      this.log.info("Hooking nvim.onRedraw");
-      this.nvim.onRedraw = (method, args) => {
-        try {
-          const head = Array.isArray(args) && args.length > 0 ? args[0] : "(empty)";
-          this.log.debug(`onRedraw: ${method}`, head);
-          // Fallback sync while in insert mode: sometimes on_lines may not arrive via buf_attach
-          this.maybeScheduleFallbackSync();
-        } catch (e) {
-          this.log.error("onRedraw handler error", e);
-        }
-      };
+      if (this.nvim) {
+        this.log.info("Hooking nvim.onRedraw");
+        (window as any).__nvimLog?.("hook: onRedraw");
+        this.nvim.onRedraw = (method, args) => {
+          try {
+            const head = Array.isArray(args) && args.length > 0 ? args[0] : "(empty)";
+            this.log.debug(`onRedraw: ${method}`, head);
+            // Fallback sync while in insert mode: sometimes on_lines may not arrive via buf_attach
+            this.maybeScheduleFallbackSync();
+          } catch (e) {
+            this.log.error("onRedraw handler error", e);
+          }
+        };
+      } else {
+        this.log.warn("Skipping nvim.onRedraw hookup: nvim not started");
+      }
 
       // Mode change: previously used to drive visual selection highlight; disabled for now
-      this.nvim.onModeChange = async (mode) => {
-        this.log.debug("onModeChange", { mode });
-      };
+      if (this.nvim) {
+        this.nvim.onModeChange = async (mode) => {
+          this.log.debug("onModeChange", { mode });
+        };
+      }
 
-      // Cmdline overlay wiring
-      this.cmdline = new CommandLineModal(this.app);
+      // Cmdline wiring for CM6 bottom bar (no modal)
+      this.cmdline = undefined; // stop using modal
       this.nvim.onCmdline = (ev) => {
         try {
           if (ev.type === "show") {
             this.log.debug("cmdline show", { prompt: ev.prompt, contentLen: ev.content.length, pos: ev.pos });
-            this.cmdline?.update(ev.prompt, ev.content, ev.pos);
+            // Query authoritative state from Neovim to ensure accurate echo
+            void this.nvim.getCmdlineState().then((st) => {
+              window.dispatchEvent(new CustomEvent("obsidian-neovim-cmdline-state", { detail: { type: st.type, content: st.content, pos: st.pos, visible: true } }));
+            });
+            this.startCmdlinePolling();
           } else if (ev.type === "pos") {
             // Future: track content locally and update caret only
             this.log.debug("cmdline pos", { pos: ev.pos });
+            void this.nvim.getCmdlineState().then((st) => {
+              window.dispatchEvent(new CustomEvent("obsidian-neovim-cmdline-state", { detail: { type: st.type, content: st.content, pos: st.pos, visible: true } }));
+            });
           } else if (ev.type === "hide") {
             this.log.debug("cmdline hide");
-            this.cmdline?.hideCmdline();
+            window.dispatchEvent(new CustomEvent("obsidian-neovim-cmdline-state", { detail: { type: ":", content: "", pos: 0, visible: false } }));
+            this.stopCmdlinePolling();
           } else if (ev.type === "wildmenu") {
             this.log.debug("cmdline wildmenu", { count: ev.items.length, selected: ev.selected });
-            this.cmdline?.updateWildmenu(ev.items, ev.selected);
+            // TODO: render wildmenu in bar
           }
         } catch (e) {
           this.log.warn("cmdline overlay error", { err: (e as any)?.message ?? String(e) });
@@ -164,34 +252,39 @@ export default class NeovimBackendPlugin extends Plugin {
       };
 
       // on_lines -> apply precise changes
-      this.nvim.onLines = (ev) => {
-        this.log.debug("onLines received", {
-          buf: ev.buf,
-          first: ev.firstline,
-          last: ev.lastline,
-          lines: ev.linedata.length
-        });
-        this.sync.enqueue(ev);
-      };
+      if (this.nvim) {
+        this.nvim.onLines = (ev) => {
+          this.log.debug("onLines received", {
+            buf: ev.buf,
+            first: ev.firstline,
+            last: ev.lastline,
+            lines: ev.linedata.length
+          });
+          this.sync.enqueue(ev);
+        };
+      }
 
       // Cursor sync: set Obsidian cursor when Neovim moves it
-      this.nvim.onCursor = async ({ line, col }) => {
-        try {
-          const ed = getActiveEditor(this.app);
-          if (!ed) {
-            this.log.debug("onCursor: no active editor");
-            return;
-          }
-          const lc = ed.lineCount();
-          const clampedLine = Math.max(0, Math.min(line, Math.max(0, lc - 1)));
-          const lineText = ed.getLine(clampedLine) ?? "";
-          const clampedCh = Math.max(0, Math.min(col, lineText.length));
-          ed.setCursor({ line: clampedLine, ch: clampedCh });
+      if (this.nvim) {
+        this.nvim.onCursor = async ({ line, col }) => {
+          try {
+            const ed = getActiveEditor(this.app);
+            if (!ed) {
+              this.log.debug("onCursor: no active editor");
+              return;
+            }
+            const lc = ed.lineCount();
+            const clampedLine = Math.max(0, Math.min(line, Math.max(0, lc - 1)));
+            const lineText = ed.getLine(clampedLine) ?? "";
+            const clampedCh = Math.max(0, Math.min(col, lineText.length));
+            ed.setCursor({ line: clampedLine, ch: clampedCh });
           this.log.debug("onCursor: set", { line: clampedLine, ch: clampedCh });
-        } catch (e) {
-          this.log.warn("onCursor error", { err: (e as any)?.message ?? String(e) });
-        }
-      };
+          (window as any).__nvimLog?.(`cursor: ${clampedLine}:${clampedCh}`);
+          } catch (e) {
+            this.log.warn("onCursor error", { err: (e as any)?.message ?? String(e) });
+          }
+        };
+      }
 
       // Register the CM6 extension only after layout is ready
       this.app.workspace.onLayoutReady(() => {
@@ -249,6 +342,7 @@ export default class NeovimBackendPlugin extends Plugin {
           // Listen for key-driven sync triggers
           this.registerDomEvent(window, "obsidian-neovim-input" as any, () => {
             this.log.debug("obsidian-neovim-input event");
+            (window as any).__nvimLog?.("event: obsidian-neovim-input");
             this.handleKeyDrivenSync();
           });
           // Capture-level key interception to ensure Neovim receives keys
@@ -258,24 +352,45 @@ export default class NeovimBackendPlugin extends Plugin {
               if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "P" || e.key === "p")) return;
               const term = translateKey(e);
               if (!term) return;
-              // Open cmdline modal immediately on ':' or search ('/' or '?')
-              if (term === ":") {
-                this.cmdline?.update(":", "", 0);
-              } else if (term === "/" || term === "?") {
-                this.cmdline?.update(term, "", 0);
+              // Open cmdline bar immediately on ':' or search ('/' or '?') and start polling
+              if (term === ":" || term === "/" || term === "?") {
+                window.dispatchEvent(new CustomEvent("obsidian-neovim-cmdline-state", { detail: { type: term, content: "", pos: 0, visible: true } }));
+                // Kick one immediate poll before sending ':' to avoid a blank frame
+                void this.nvim.getCmdlineState().then((st) => {
+                  window.dispatchEvent(new CustomEvent("obsidian-neovim-cmdline-state", { detail: { type: st.type, content: st.content, pos: st.pos, visible: true } }));
+                });
+                this.startCmdlinePolling();
               }
               e.preventDefault();
               e.stopPropagation();
               (e as any).__nvimHandled = true;
-              void this.nvim
+              (window as any).__nvimLog?.(`key: ${term}`);
+              // If modal is open and we're in cmdline, locally echo printable input before sending
+              const isCmdPromptOpen = term === ":" || term === "/" || term === "?";
+              const isCmdSubmitOrCancel = term === "<CR>" || term === "<Esc>";
+              // After sending input, re-pull cmdline state to reflect any changes (mappings, etc.)
+              const send = () => this.nvim
                 .input(term)
-                .then(() => this.log.debug("capture nvim.input ok", { term }))
+                .then(async () => {
+                  this.log.debug("capture nvim.input ok", { term });
+                  if (isCmdPromptOpen) {
+                    const st = await this.nvim.getCmdlineState();
+                    window.dispatchEvent(new CustomEvent("obsidian-neovim-cmdline-state", { detail: { type: st.type, content: st.content, pos: st.pos, visible: !isCmdSubmitOrCancel } }));
+                  }
+                  if (isCmdPromptOpen && isCmdSubmitOrCancel) this.stopCmdlinePolling();
+                })
                 .catch((err) => this.log.warn("capture nvim.input failed", { term, err: err?.message ?? String(err) }))
                 .finally(() => {
                   try {
                     window.dispatchEvent(new CustomEvent("obsidian-neovim-input", { detail: { term } }));
                   } catch {}
                 });
+              // Avoid potential race for the initial ':' by microtasking the send
+              if (term === ":") {
+                queueMicrotask(() => { void send(); });
+              } else {
+                void send();
+              }
             } catch (err) {
               this.log.warn("capture key error", { err: (err as any)?.message ?? String(err) });
             }
@@ -503,6 +618,35 @@ export default class NeovimBackendPlugin extends Plugin {
   private async syncVisualSelection() { return; }
 
   // Visual mode helpers intentionally omitted (see comment above)
+
+  private startCmdlinePolling() {
+    try {
+      if (this.cmdPollId != null) return;
+      const tick = async () => {
+        try {
+          const st = await this.nvim.getCmdlineState();
+          this.cmdline?.update(st.type, st.content, st.pos);
+          (window as any).__nvimLog?.(`cmdline: type=${st.type} pos=${st.pos} text='${st.content}'`);
+        } catch (e) {
+          // Ignore errors during polling
+        }
+      };
+      const id = window.setInterval(tick, 50);
+      this.cmdPollId = id as unknown as number;
+      this.registerInterval(id);
+      (window as any).__nvimLog?.("cmdline polling: start");
+    } catch {}
+  }
+
+  private stopCmdlinePolling() {
+    try {
+      if (this.cmdPollId != null) {
+        window.clearInterval(this.cmdPollId);
+        this.cmdPollId = null;
+        (window as any).__nvimLog?.("cmdline polling: stop");
+      }
+    } catch {}
+  }
 }
 
 class NeovimSettingsTab extends PluginSettingTab {

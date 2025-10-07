@@ -1,4 +1,4 @@
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorView, keymap, ViewPlugin } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
 import type { NvimHost } from "@src/nvim";
 
@@ -235,9 +235,72 @@ export function neovimExtension(nvim: NvimHost): Extension {
     }
   });
 
-  // Visual selection highlighting removed for now. Previous attempts:
-  // - ViewPlugin + StateField driven by custom events to paint ranges
-  // - Mapping Neovim visual marks to CM6 positions
-  // Cursor stability and rendering consistency need further design.
-  return [keys, domHandlers];
+  // Lightweight cmdline bar within the editor (bottom), driven by window events
+  const cmdlineBar = ViewPlugin.fromClass(
+    class {
+      private bar: HTMLElement | null = null;
+      private onState = (ev: Event) => {
+        try {
+          const e = ev as CustomEvent<{ type: string; content: string; pos: number; visible: boolean; }>;
+          const d = e.detail;
+          if (!d || !d.visible) {
+            this.hide();
+            return;
+          }
+          this.ensure();
+          if (!this.bar) return;
+          const prompt = d.type || ":";
+          const before = d.content.slice(0, Math.max(0, Math.min(d.pos, d.content.length)));
+          const after = d.content.slice(Math.max(0, Math.min(d.pos, d.content.length)));
+          this.bar.innerHTML = `<span class="nvim-cmdbar-prompt">${escapeHtml(prompt)}</span> <span class="nvim-cmdbar-content">${escapeHtml(before)}<span class="nvim-cmdbar-caret">&nbsp;</span>${escapeHtml(after)}</span>`;
+        } catch (err) {
+          log(nvim, "warn", "cmdline bar update error", { err: (err as any)?.message ?? String(err) });
+        }
+      };
+      constructor(private view: EditorView) {
+        window.addEventListener("obsidian-neovim-cmdline-state", this.onState as any);
+      }
+      destroy() {
+        window.removeEventListener("obsidian-neovim-cmdline-state", this.onState as any);
+        this.hide();
+      }
+      private ensure() {
+        if (this.bar) return;
+        const el = document.createElement("div");
+        el.className = "nvim-cmdbar";
+        // position at bottom of the editor
+        el.style.position = "absolute";
+        el.style.left = "0";
+        el.style.right = "0";
+        el.style.bottom = "0";
+        if (!this.view.scrollDOM.style.position) this.view.scrollDOM.style.position = "relative";
+        this.view.scrollDOM.appendChild(el);
+        this.bar = el;
+      }
+      private hide() {
+        if (this.bar && this.bar.parentElement) this.bar.parentElement.removeChild(this.bar);
+        this.bar = null;
+      }
+    }
+  );
+
+  const theme = EditorView.baseTheme({
+    ".nvim-cmdbar": {
+      backgroundColor: "var(--background-secondary)",
+      borderTop: "1px solid var(--background-modifier-border)",
+      fontFamily: "var(--font-monospace)",
+      fontSize: "12px",
+      color: "var(--text-normal)",
+      padding: "4px 8px",
+      pointerEvents: "none"
+    },
+    ".nvim-cmdbar-prompt": { color: "var(--text-muted)" },
+    ".nvim-cmdbar-caret": { display: "inline-block", width: "7px", background: "var(--text-accent)" }
+  });
+
+  return [keys, domHandlers, cmdlineBar, theme];
+}
+
+function escapeHtml(s: string) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

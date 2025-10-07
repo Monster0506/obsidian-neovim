@@ -11,6 +11,10 @@ export class FileLogger {
   private ready = false;
   private queue: string[] = [];
   private writing = false;
+  private tmpLogFile: string;
+  private memoryBuffer: string[] = [];
+  private memoryBufferLimit = 500;
+  private storageKey: string;
 
   constructor(private app: App, private tag = "[obsidian-neovim]", private pluginDir?: string) {
     // Always prefer writing logs under the plugin directory to ensure availability
@@ -25,6 +29,9 @@ export class FileLogger {
     const m = String(stamp.getMonth() + 1).padStart(2, "0");
     const d = String(stamp.getDate()).padStart(2, "0");
     this.logFile = join(this.logDir, `log-${y}${m}${d}.txt`);
+    // Secondary tmp sink (best-effort)
+    this.tmpLogFile = `/tmp/obsidian-neovim-${y}${m}${d}.log`;
+    this.storageKey = `obsidian-neovim-log-${y}${m}${d}`;
   }
 
   async init(): Promise<void> {
@@ -36,11 +43,17 @@ export class FileLogger {
         normalizePath(this.logFile),
         `\n===== ${this.ts()} Logger init ${this.tag} =====\n`
       );
+      // Initialize tmp sink
+      try {
+        await appendFile(this.tmpLogFile, `\n===== ${this.ts()} Logger init ${this.tag} (tmp) =====\n`);
+      } catch (_) {}
       this.ready = true;
       if (this.queue.length) {
         const queued = this.queue.join("");
         this.queue.length = 0;
         await appendFile(normalizePath(this.logFile), queued);
+        try { await appendFile(this.tmpLogFile, queued); } catch (_) {}
+        try { this.appendToStorage(queued); } catch (_) {}
       }
     } catch (e) {
       try {
@@ -79,12 +92,44 @@ export class FileLogger {
     try {
       while (this.queue.length) {
         const chunk = this.queue.splice(0, 256).join("");
+        // file sink under plugin dir
         await appendFile(normalizePath(this.logFile), chunk);
+        // tmp sink (best-effort)
+        try { await appendFile(this.tmpLogFile, chunk); } catch (_) {}
+        // console sink
+        try { console.debug?.(chunk) } catch (_) {}
+        // local storage sink
+        try { this.appendToStorage(chunk); } catch (_) {}
+        // memory buffer sink
+        this.appendToMemory(chunk);
+        // in-app event sink
+        try {
+          (window as any)?.dispatchEvent?.(new CustomEvent("obsidian-neovim-log", { detail: { chunk } }));
+        } catch (_) {}
       }
     } catch (_) {
       // keep queue for retry
     } finally {
       this.writing = false;
+    }
+  }
+
+  private appendToStorage(text: string) {
+    try {
+      const prev = (window as any)?.localStorage?.getItem?.(this.storageKey) ?? "";
+      (window as any)?.localStorage?.setItem?.(this.storageKey, prev + text);
+    } catch (_) {}
+  }
+
+  private appendToMemory(text: string) {
+    // split by lines to cap memory reasonably
+    const parts = String(text).split(/\n/);
+    for (const p of parts) {
+      if (!p) continue;
+      this.memoryBuffer.push(p);
+      if (this.memoryBuffer.length > this.memoryBufferLimit) {
+        this.memoryBuffer.splice(0, this.memoryBuffer.length - this.memoryBufferLimit);
+      }
     }
   }
 
@@ -104,6 +149,19 @@ export class FileLogger {
 
   getLogFilePath(): string {
     return this.logFile;
+  }
+
+  getTmpLogFilePath(): string {
+    return this.tmpLogFile;
+  }
+
+  getLocalStorageKey(): string {
+    return this.storageKey;
+  }
+
+  getRecentBuffer(max = 200): string {
+    const start = Math.max(0, this.memoryBuffer.length - max);
+    return this.memoryBuffer.slice(start).join("\n");
   }
 }
 

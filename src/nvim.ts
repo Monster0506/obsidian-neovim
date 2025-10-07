@@ -432,6 +432,24 @@ export class NvimHost {
       return null;
     }
   }
+
+  async getCmdlineState(): Promise<{ type: string; content: string; pos: number }> {
+    try {
+      const [ctype, content, pos] = (await Promise.all([
+        this.nvim.request("nvim_call_function", ["getcmdtype", []]),
+        this.nvim.request("nvim_call_function", ["getcmdline", []]),
+        this.nvim.request("nvim_call_function", ["getcmdpos", []])
+      ])) as [string, string, number];
+      return {
+        type: String(ctype ?? ":"),
+        content: String(content ?? ""),
+        pos: Math.max(0, Number(pos ?? 0) - 1)
+      };
+    } catch (e) {
+      this.log.warn("getCmdlineState failed", { err: (e as any)?.message ?? String(e) });
+      return { type: ":", content: "", pos: 0 };
+    }
+  }
 }
 
 function escapeVimPath(p: string) {
