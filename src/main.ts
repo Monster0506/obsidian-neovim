@@ -537,9 +537,9 @@ export default class NeovimBackendPlugin extends Plugin {
     }
   }
 
-  private maybeScheduleFallbackSync() {
+  private async maybeScheduleFallbackSync() {
     try {
-      const mode = this.nvim.getMode();
+      const mode = (await this.nvim.getMode()).mode;
       if (mode !== "insert") return;
       const now = Date.now();
       // throttle to ~20 Hz max

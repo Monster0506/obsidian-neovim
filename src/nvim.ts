@@ -5,13 +5,13 @@ import { App } from "obsidian";
 import { FileLogger } from "@src/logger";
 
 export type NvimOptions = {
-  nvimPath?: string;
-  initLuaPath?: string; // absolute path; if empty, we use plugin's assets/host-init.lua
-  pluginDir?: string; // absolute plugin directory path (for defaults)
-  // External attachment instead of spawning
-  externalSocketPath?: string; // If set, attach via unix socket/pipe
-  externalHost?: string; // Host for TCP attach
-  externalPort?: number; // Port for TCP attach
+	nvimPath?: string;
+	initLuaPath?: string; // absolute path; if empty, we use plugin's assets/host-init.lua
+		pluginDir?: string; // absolute plugin directory path (for defaults)
+			// External attachment instead of spawning
+			externalSocketPath?: string; // If set, attach via unix socket/pipe
+				externalHost?: string; // Host for TCP attach
+					externalPort?: number; // Port for TCP attach
 };
 
 export type RedrawHandler = (method: string, args: any[]) => void;
@@ -19,439 +19,448 @@ export type OnLinesHandler = (ev: NvimOnLinesEvent) => void;
 export type OnCursorHandler = (pos: { line: number; col: number }) => void;
 export type OnModeChangeHandler = (mode: string) => void;
 export type OnCmdlineEvent =
-  | { type: "show"; content: string; prompt: string; pos: number; level: number }
-  | { type: "pos"; pos: number }
-  | { type: "hide" }
-  | { type: "special"; char: string }
-  | { type: "wildmenu"; items: string[]; selected: number };
+	| { type: "show"; content: string; prompt: string; pos: number; level: number }
+		| { type: "pos"; pos: number }
+			| { type: "hide" }
+				| { type: "special"; char: string }
+					| { type: "wildmenu"; items: string[]; selected: number };
 
-export type NvimOnLinesEvent = {
-  buf: number;
-  changedtick: number;
-  firstline: number; // inclusive
-  lastline: number; // exclusive
-  linedata: string[]; // replacement lines
-};
+					export type NvimOnLinesEvent = {
+						buf: number;
+						changedtick: number;
+						firstline: number; // inclusive
+						lastline: number; // exclusive
+						linedata: string[]; // replacement lines
+					};
 
-export class NvimHost {
-  private proc!: ChildProcessWithoutNullStreams;
-  public nvim!: NeovimClient;
-  private ready = false;
-  private mode: string = "normal";
-  private currentBuf: number | null = null;
+					export class NvimHost {
+						private proc!: ChildProcessWithoutNullStreams;
+						public nvim!: NeovimClient;
+						private ready = false;
+						private mode: string = "normal";
+						private currentBuf: number | null = null;
 
-  constructor(
-    private app: App,
-    private opts: NvimOptions = {},
-    public log = new FileLogger(app)
-  ) {}
+						constructor(
+							private app: App,
+							private opts: NvimOptions = {},
+								public log = new FileLogger(app)
+						) {}
 
-  onRedraw?: RedrawHandler;
-  onLines?: OnLinesHandler;
-  onCursor?: OnCursorHandler;
-  onModeChange?: OnModeChangeHandler;
-  onCmdline?: (ev: OnCmdlineEvent) => void;
+						onRedraw?: RedrawHandler;
+						onLines?: OnLinesHandler;
+						onCursor?: OnCursorHandler;
+						onModeChange?: OnModeChangeHandler;
+						onCmdline?: (ev: OnCmdlineEvent) => void;
 
-  async start(): Promise<void> {
-    await this.log.init();
-    this.log.info("NvimHost.start() begin", { opts: this.opts });
+						async start(): Promise<void> {
+							await this.log.init();
+							this.log.info("NvimHost.start() begin", { opts: this.opts });
 
-    // External attach mode
-    const useSocket = !!this.opts.externalSocketPath;
-    const useTcp = !!(this.opts.externalHost && this.opts.externalPort);
-    if (useSocket || useTcp) {
-      try {
-        const attachOpts: any = useSocket
-          ? { socket: this.opts.externalSocketPath }
-          : { address: this.opts.externalHost, port: this.opts.externalPort };
-        const client = await attach(attachOpts);
-        this.nvim = client as unknown as NeovimClient;
-        this.log.info("attach() OK (external)");
-      } catch (e) {
-        this.log.error("external attach failed", e);
-        throw e;
-      }
-      this.setupUiNotifications();
-      this.log.info("NvimHost.start() complete (external)");
-      return;
-    }
+							// External attach mode
+							const useSocket = !!this.opts.externalSocketPath;
+							const useTcp = !!(this.opts.externalHost && this.opts.externalPort);
+							if (useSocket || useTcp) {
+								try {
+									const attachOpts: any = useSocket
+										? { socket: this.opts.externalSocketPath }
+										: { address: this.opts.externalHost, port: this.opts.externalPort };
+										const client = await attach(attachOpts);
+										this.nvim = client as unknown as NeovimClient;
+										this.log.info("attach() OK (external)");
+								} catch (e) {
+									this.log.error("external attach failed", e);
+									throw e;
+								}
+								this.setupUiNotifications();
+								this.log.info("NvimHost.start() complete (external)");
+								return;
+							}
 
-    const nvimPath = this.opts.nvimPath ?? "nvim";
-    let initLua = this.opts.initLuaPath;
-    if (!initLua) {
-      const base = this.opts.pluginDir || ((this.app as any).vault?.adapter?.basePath ?? "");
-      initLua = join(base, "assets", "host-init.lua");
-    }
+							const nvimPath = this.opts.nvimPath ?? "nvim";
+							let initLua = this.opts.initLuaPath;
+							if (!initLua) {
+								const base = this.opts.pluginDir || ((this.app as any).vault?.adapter?.basePath ?? "");
+								initLua = join(base, "assets", "host-init.lua");
+							}
 
-    const args = ["--embed", "-u", "NONE", "-n"];
-    args.push("-c", `lua dofile('${initLua.replace(/\\/g, "\\\\")}')`);
+							const args = ["--embed", "-u", "NONE", "-n"];
+							args.push("-c", `lua dofile('${initLua.replace(/\\/g, "\\\\")}')`);
 
-    this.log.info("Spawning Neovim", { nvimPath, args });
+							this.log.info("Spawning Neovim", { nvimPath, args });
 
-    try {
-      this.proc = spawn(nvimPath, args, { stdio: "pipe" });
-    } catch (e) {
-      this.log.error("spawn() threw", e);
-      throw e;
-    }
+							try {
+								this.proc = spawn(nvimPath, args, { stdio: "pipe" });
+							} catch (e) {
+								this.log.error("spawn() threw", e);
+								throw e;
+							}
 
-    this.proc.on("error", (err) => {
-      this.log.error("proc error", err);
-    });
-    this.proc.on("exit", (code, signal) => {
-      this.log.warn("proc exit", { code, signal });
-    });
-    this.proc.stderr.on("data", (buf) => {
-      this.log.error("[nvim stderr]", buf?.toString?.() ?? String(buf));
-    });
-    this.proc.stdout.on("data", (buf) => {
-      this.log.debug("[nvim stdout chunk]", (buf?.length ?? 0) + " bytes");
-    });
+							this.proc.on("error", (err) => {
+								this.log.error("proc error", err);
+							});
+							this.proc.on("exit", (code, signal) => {
+								this.log.warn("proc exit", { code, signal });
+							});
+							this.proc.stderr.on("data", (buf) => {
+								this.log.error("[nvim stderr]", buf?.toString?.() ?? String(buf));
+							});
+							this.proc.stdout.on("data", (buf) => {
+								this.log.debug("[nvim stdout chunk]", (buf?.length ?? 0) + " bytes");
+							});
 
-    try {
-      this.nvim = await attach({
-        proc: this.proc,
-        reader: this.proc.stdout,
-        writer: this.proc.stdin
-      });
-      this.log.info("attach() OK");
-    } catch (e) {
-      this.log.error("attach() failed", e);
-      throw e;
-    }
+							try {
+								this.nvim = await attach({
+									proc: this.proc,
+									reader: this.proc.stdout,
+									writer: this.proc.stdin
+								});
+								this.log.info("attach() OK");
+							} catch (e) {
+								this.log.error("attach() failed", e);
+								throw e;
+							}
 
-    try {
-      const apiInfo = (await this.nvim.request("nvim_get_api_info", [])) as any;
-      this.log.info("nvim_get_api_info", {
-        version: apiInfo?.[1]?.version ?? apiInfo
-      });
-    } catch (e) {
-      this.log.warn("nvim_get_api_info failed", e);
-    }
+							try {
+								const apiInfo = (await this.nvim.request("nvim_get_api_info", [])) as any;
+								this.log.info("nvim_get_api_info", {
+									version: apiInfo?.[1]?.version ?? apiInfo
+								});
+							} catch (e) {
+								this.log.warn("nvim_get_api_info failed", e);
+							}
 
-    try {
-      await this.nvim.request("nvim_ui_attach", [
-        120,
-        40,
-        {
-          rgb: true,
-          ext_cmdline: true,
-          ext_messages: true,
-          ext_popupmenu: true,
-          ext_hlstate: true,
-          ext_linegrid: true
-        }
-      ]);
-      this.log.info("nvim_ui_attach OK");
-    } catch (e) {
-      this.log.error("nvim_ui_attach failed", e);
-      throw e;
-    }
+							try {
+								await this.nvim.request("nvim_ui_attach", [
+									120,
+									40,
+									{
+										rgb: true,
+										ext_cmdline: true,
+										ext_messages: true,
+										ext_popupmenu: true,
+										ext_hlstate: true,
+										ext_linegrid: true
+									}
+								]);
+								this.log.info("nvim_ui_attach OK");
+							} catch (e) {
+								this.log.error("nvim_ui_attach failed", e);
+								throw e;
+							}
 
-    this.setupUiNotifications();
+							this.setupUiNotifications();
 
-    this.log.info("NvimHost.start() complete");
-  }
+							this.log.info("NvimHost.start() complete");
+						}
 
-  private setupUiNotifications() {
-    this.nvim.on("notification", (method: string, args: any[]) => {
-      if (method === "redraw") {
-        this.parseRedraw(args);
-        const head = Array.isArray(args) && args.length ? args[0] : "(empty)";
-        this.log.debug("notification: redraw", head);
-        this.onRedraw?.(method, args);
-      } else if (method === "nvim_buf_lines_event") {
-        try {
-          const [buf, changedtick, first, last, linedata] = args as any[];
-          const ev: NvimOnLinesEvent = {
-            buf,
-            changedtick,
-            firstline: first,
-            lastline: last,
-            linedata
-          };
-          this.log.debug("nvim_buf_lines_event", {
-            buf,
-            changedtick,
-            first,
-            last,
-            lines: linedata?.length ?? 0
-          });
-          this.onLines?.(ev);
-        } catch (e) {
-          this.log.warn("nvim_buf_lines_event parse failed", {
-            err: (e as any)?.message ?? String(e)
-          });
-        }
-      } else {
-        this.log.debug("notification", { method });
-      }
-    });
-  }
+						private setupUiNotifications() {
+							this.nvim.on("notification", (method: string, args: any[]) => {
+								if (method === "redraw") {
+									this.parseRedraw(args);
+									const head = Array.isArray(args) && args.length ? args[0] : "(empty)";
+									this.log.debug("notification: redraw", head);
+									this.onRedraw?.(method, args);
+								} else if (method === "nvim_buf_lines_event") {
+									try {
+										const [buf, changedtick, first, last, linedata] = args as any[];
+										const ev: NvimOnLinesEvent = {
+											buf,
+											changedtick,
+											firstline: first,
+											lastline: last,
+											linedata
+										};
+										this.log.debug("nvim_buf_lines_event", {
+											buf,
+											changedtick,
+											first,
+											last,
+											lines: linedata?.length ?? 0
+										});
+										this.onLines?.(ev);
+									} catch (e) {
+										this.log.warn("nvim_buf_lines_event parse failed", {
+											err: (e as any)?.message ?? String(e)
+										});
+									}
+								} else {
+									this.log.debug("notification", { method });
+								}
+							});
+						}
 
-  private parseRedraw(batches: any[]) {
-    try {
-      for (const batch of batches) {
-        const [name, ...tuples] = batch;
-        switch (name) {
-          case "mode_change": {
-            for (const t of tuples) {
-              const [m] = t;
-              this.mode = String(m ?? "normal");
-              this.log.info("mode_change", { mode: this.mode });
-              try {
-                this.onModeChange?.(this.mode);
-              } catch (e) {
-                this.log.warn("onModeChange handler error", {
-                  err: (e as any)?.message ?? String(e)
-                });
-              }
-            }
-            break;
-          }
-          case "grid_cursor_goto": {
-            // After UI reports a cursor move, query exact buffer cursor and emit
-            for (const _t of tuples) {
-              queueMicrotask(async () => {
-                try {
-                  const pos = await this.getCursor();
-                  this.onCursor?.(pos);
-                  this.log.debug("cursor sync via nvim_win_get_cursor", pos);
-                } catch (e) {
-                  this.log.warn("getCursor failed", {
-                    err: (e as any)?.message ?? String(e)
-                  });
-                }
-              });
-            }
-            break;
-          }
-          case "cmdline_show": {
-            // [content, pos, level, prompt, indent, separator]
-            for (const t of tuples) {
-              try {
-                const [content, pos, level, prompt] = t as [any[], number, number, string];
-                const text = (content || []).map((seg: any[]) => String(seg?.[0] ?? "")).join("");
-                this.onCmdline?.({ type: "show", content: text, prompt: String(prompt ?? ":"), pos: Number(pos ?? 0), level: Number(level ?? 0) });
-              } catch (e) {
-                this.log.warn("cmdline_show parse failed", { err: (e as any)?.message ?? String(e) });
-              }
-            }
-            break;
-          }
-          case "cmdline_pos": {
-            for (const t of tuples) {
-              try {
-                const [pos] = t as [number];
-                this.onCmdline?.({ type: "pos", pos: Number(pos ?? 0) });
-              } catch (e) {
-                this.log.warn("cmdline_pos parse failed", { err: (e as any)?.message ?? String(e) });
-              }
-            }
-            break;
-          }
-          case "cmdline_hide": {
-            this.onCmdline?.({ type: "hide" });
-            break;
-          }
-          case "cmdline_special_char": {
-            for (const t of tuples) {
-              try {
-                const [ch] = t as [string];
-                this.onCmdline?.({ type: "special", char: String(ch ?? "") });
-              } catch (e) {
-                this.log.warn("cmdline_special_char parse failed", { err: (e as any)?.message ?? String(e) });
-              }
-            }
-            break;
-          }
-          case "wildmenu_show": {
-            for (const t of tuples) {
-              try {
-                const [items] = t as [any[]];
-                const list = (items || []).map((seg) => String(seg?.[0] ?? seg ?? ""));
-                this.onCmdline?.({ type: "wildmenu", items: list, selected: 0 });
-              } catch (e) {
-                this.log.warn("wildmenu_show parse failed", { err: (e as any)?.message ?? String(e) });
-              }
-            }
-            break;
-          }
-          case "wildmenu_select": {
-            for (const t of tuples) {
-              try {
-                const [selected] = t as [number];
-                this.onCmdline?.({ type: "wildmenu", items: [], selected: Number(selected ?? 0) });
-              } catch (e) {
-                this.log.warn("wildmenu_select parse failed", { err: (e as any)?.message ?? String(e) });
-              }
-            }
-            break;
-          }
-          default:
-            break;
-        }
-      }
-    } catch (e) {
-      this.log.warn("parseRedraw failed", { err: (e as any)?.message ?? String(e) });
-    }
-  }
+						private parseRedraw(batches: any[]) {
+							try {
+								for (const batch of batches) {
+									const [name, ...tuples] = batch;
+									switch (name) {
+										case "mode_change": {
+											for (const t of tuples) {
+												const [m] = t;
+												this.mode = String(m ?? "normal");
+												this.log.info("mode_change", { mode: this.mode });
+												try {
+													this.onModeChange?.(this.mode);
+												} catch (e) {
+													this.log.warn("onModeChange handler error", {
+														err: (e as any)?.message ?? String(e)
+													});
+												}
+											}
+											break;
+										}
+										case "grid_cursor_goto": {
+											// After UI reports a cursor move, query exact buffer cursor and emit
+											for (const _t of tuples) {
+												queueMicrotask(async () => {
+													try {
+														const pos = await this.getCursor();
+														this.onCursor?.(pos);
+														this.log.debug("cursor sync via nvim_win_get_cursor", pos);
+													} catch (e) {
+														this.log.warn("getCursor failed", {
+															err: (e as any)?.message ?? String(e)
+														});
+													}
+												});
+											}
+											break;
+										}
+										case "cmdline_show": {
+											// [content, pos, level, prompt, indent, separator]
+											for (const t of tuples) {
+												try {
+													const [content, pos, level, prompt] = t as [any[], number, number, string];
+													const text = (content || []).map((seg: any[]) => String(seg?.[0] ?? "")).join("");
+													this.onCmdline?.({ type: "show", content: text, prompt: String(prompt ?? ":"), pos: Number(pos ?? 0), level: Number(level ?? 0) });
+												} catch (e) {
+													this.log.warn("cmdline_show parse failed", { err: (e as any)?.message ?? String(e) });
+												}
+											}
+											break;
+										}
+										case "cmdline_pos": {
+											for (const t of tuples) {
+												try {
+													const [pos] = t as [number];
+													this.onCmdline?.({ type: "pos", pos: Number(pos ?? 0) });
+												} catch (e) {
+													this.log.warn("cmdline_pos parse failed", { err: (e as any)?.message ?? String(e) });
+												}
+											}
+											break;
+										}
+										case "cmdline_hide": {
+											this.onCmdline?.({ type: "hide" });
+											break;
+										}
+										case "cmdline_special_char": {
+											for (const t of tuples) {
+												try {
+													const [ch] = t as [string];
+													this.onCmdline?.({ type: "special", char: String(ch ?? "") });
+												} catch (e) {
+													this.log.warn("cmdline_special_char parse failed", { err: (e as any)?.message ?? String(e) });
+												}
+											}
+											break;
+										}
+										case "wildmenu_show": {
+											for (const t of tuples) {
+												try {
+													const [items] = t as [any[]];
+													const list = (items || []).map((seg) => String(seg?.[0] ?? seg ?? ""));
+													this.onCmdline?.({ type: "wildmenu", items: list, selected: 0 });
+												} catch (e) {
+													this.log.warn("wildmenu_show parse failed", { err: (e as any)?.message ?? String(e) });
+												}
+											}
+											break;
+										}
+										case "wildmenu_select": {
+											for (const t of tuples) {
+												try {
+													const [selected] = t as [number];
+													this.onCmdline?.({ type: "wildmenu", items: [], selected: Number(selected ?? 0) });
+												} catch (e) {
+													this.log.warn("wildmenu_select parse failed", { err: (e as any)?.message ?? String(e) });
+												}
+											}
+											break;
+										}
+										default:
+											break;
+									}
+								}
+							} catch (e) {
+								this.log.warn("parseRedraw failed", { err: (e as any)?.message ?? String(e) });
+							}
+						}
 
-  getMode(): string {
-    return this.mode;
-  }
 
-  isReady() {
-    return this.ready;
-  }
+						isReady() {
+							return this.ready;
+						}
 
-  async stop() {
-    this.log.info("NvimHost.stop()");
-    try {
-      await this.nvim?.request("nvim_command", [":qa!"]);
-    } catch (e) {
-      this.log.warn("nvim_command(:qa!) failed (continuing)", e);
-    }
-    try {
-      this.proc?.kill();
-    } catch (e) {
-      this.log.warn("proc.kill() failed", e);
-    }
-  }
+						async stop() {
+							this.log.info("NvimHost.stop()");
+							try {
+								await this.nvim?.request("nvim_command", [":qa!"]);
+							} catch (e) {
+								this.log.warn("nvim_command(:qa!) failed (continuing)", e);
+							}
+							try {
+								this.proc?.kill();
+							} catch (e) {
+								this.log.warn("proc.kill() failed", e);
+							}
+						}
 
-  // API helpers
-  async input(keys: string) {
-    this.log.debug("nvim_input", { keys });
-    return this.nvim.request("nvim_input", [keys]);
-  }
+						// API helpers
+						async input(keys: string) {
+							this.log.debug("nvim_input", { keys });
+							return this.nvim.request("nvim_input", [keys]);
+						}
 
-  async command(cmd: string) {
-    this.log.debug("nvim_command", { cmd });
-    return this.nvim.request("nvim_command", [cmd]);
-  }
+						async command(cmd: string) {
+							this.log.debug("nvim_command", { cmd });
+							return this.nvim.request("nvim_command", [cmd]);
+						}
 
-  async getCurrentBuf(): Promise<number> {
-    const buf = (await this.nvim.request("nvim_get_current_buf", [])) as number;
-    this.currentBuf = buf;
-    this.log.debug("nvim_get_current_buf", { buf });
-    return buf;
-  }
+						async getCurrentBuf(): Promise<number> {
+							const buf = (await this.nvim.request("nvim_get_current_buf", [])) as number;
+							this.currentBuf = buf;
+							this.log.debug("nvim_get_current_buf", { buf });
+							return buf;
+						}
 
-  async bufAttach(buf: number) {
-    this.log.info("nvim_buf_attach", { buf });
-    return this.nvim.request("nvim_buf_attach", [buf, false, { on_lines: true }]);
-  }
+						async bufAttach(buf: number) {
+							this.log.info("nvim_buf_attach", { buf });
+							return this.nvim.request("nvim_buf_attach", [buf, false, { on_lines: true }]);
+						}
 
-  async bufDetach(buf: number) {
-    this.log.info("nvim_buf_detach", { buf });
-    return this.nvim.request("nvim_buf_detach", [buf]);
-  }
+						async bufDetach(buf: number) {
+							this.log.info("nvim_buf_detach", { buf });
+							return this.nvim.request("nvim_buf_detach", [buf]);
+						}
 
-  async setBufferText(buf: number, text: string) {
-    this.log.debug("nvim_buf_set_lines", { buf, len: text.length });
-    const lines = text.split("\n");
-    return this.nvim.request("nvim_buf_set_lines", [buf, 0, -1, false, lines]);
-  }
+						async setBufferText(buf: number, text: string) {
+							this.log.debug("nvim_buf_set_lines", { buf, len: text.length });
+							const lines = text.split("\n");
+							return this.nvim.request("nvim_buf_set_lines", [buf, 0, -1, false, lines]);
+						}
 
-  async createOrLoadBuffer(path?: string, text?: string): Promise<number> {
-    this.log.info("createOrLoadBuffer", {
-      path: path ?? "(in-memory)",
-      len: text?.length ?? 0
-    });
-    if (path) {
-      await this.command(`edit ${escapeVimPath(path)}`);
-    } else {
-      await this.command("enew");
-    }
-    const buf = await this.getCurrentBuf();
-    if (text != null) {
-      await this.setBufferText(buf, text);
-      await this.command("setlocal nomodified");
-    }
-    try {
-      await this.bufAttach(buf);
-    } catch (e) {
-      this.log.warn("bufAttach failed", {
-        buf,
-        err: (e as any)?.message ?? String(e)
-      });
-    }
-    return buf;
-  }
+						async createOrLoadBuffer(path?: string, text?: string): Promise<number> {
+							this.log.info("createOrLoadBuffer", {
+								path: path ?? "(in-memory)",
+								len: text?.length ?? 0
+							});
+							if (path) {
+								await this.command(`edit ${escapeVimPath(path)}`);
+							} else {
+								await this.command("enew");
+							}
+							const buf = await this.getCurrentBuf();
+							if (text != null) {
+								await this.setBufferText(buf, text);
+								await this.command("setlocal nomodified");
+							}
+							try {
+								await this.bufAttach(buf);
+							} catch (e) {
+								this.log.warn("bufAttach failed", {
+									buf,
+									err: (e as any)?.message ?? String(e)
+								});
+							}
+							return buf;
+						}
 
-  async getCursor(): Promise<{ line: number; col: number }> {
-    const [line1, col] = (await this.nvim.request("nvim_win_get_cursor", [
-      0
-    ])) as [number, number];
-    return { line: Math.max(0, (line1 ?? 1) - 1), col: Math.max(0, col ?? 0) };
-  }
+						async getCursor(): Promise<{ line: number; col: number }> {
+							const [line1, col] = (await this.nvim.request("nvim_win_get_cursor", [
+								0
+							])) as [number, number];
+							return { line: Math.max(0, (line1 ?? 1) - 1), col: Math.max(0, col ?? 0) };
+						}
 
-  async getBufferText(buf?: number): Promise<string> {
-    try {
-      const target = buf ?? this.currentBuf ?? (await this.getCurrentBuf());
-      const lines = (await this.nvim.request("nvim_buf_get_lines", [
-        target,
-        0,
-        -1,
-        false
-      ])) as string[];
-      return (lines ?? []).join("\n");
-    } catch (e) {
-      this.log.warn("nvim_buf_get_lines failed", {
-        err: (e as any)?.message ?? String(e)
-      });
-      return "";
-    }
-  }
+						async getBufferText(buf?: number): Promise<string> {
+							try {
+								const target = buf ?? this.currentBuf ?? (await this.getCurrentBuf());
+								const lines = (await this.nvim.request("nvim_buf_get_lines", [
+									target,
+									0,
+									-1,
+									false
+								])) as string[];
+								return (lines ?? []).join("\n");
+							} catch (e) {
+								this.log.warn("nvim_buf_get_lines failed", {
+									err: (e as any)?.message ?? String(e)
+								});
+								return "";
+							}
+						}
 
-  async getVisualSelection(): Promise<{
-    start: { line: number; col: number };
-    end: { line: number; col: number };
-    mode: string;
-  } | null> {
-    try {
-      const mode = this.getMode();
-      const start = (await this.nvim.request("nvim_call_function", [
-        "getpos",
-        ["'<"]
-      ])) as any[];
-      const finish = (await this.nvim.request("nvim_call_function", [
-        "getpos",
-        ["'>"]
-      ])) as any[];
-      const sLine = Math.max(0, (start?.[1] ?? 1) - 1);
-      const sCol = Math.max(0, (start?.[2] ?? 1) - 1);
-      const eLine = Math.max(0, (finish?.[1] ?? 1) - 1);
-      const eCol = Math.max(0, (finish?.[2] ?? 1) - 1);
-      if (sLine === eLine && sCol === eCol) return null;
-      const startPos = { line: Math.min(sLine, eLine), col: Math.min(sCol, eCol) };
-      const endPos = { line: Math.max(sLine, eLine), col: Math.max(sCol, eCol) };
-      return { start: startPos, end: endPos, mode };
-    } catch (e) {
-      this.log.warn("getVisualSelection failed", { err: (e as any)?.message ?? String(e) });
-      return null;
-    }
-  }
+						async getVisualSelection(): Promise<{
+							start: { line: number; col: number };
+							end: { line: number; col: number };
+							mode: string;
+						} | null> {
+							try {
+								const mode = (await this.getMode()).mode;
+								const start = (await this.nvim.request("nvim_call_function", [
+									"getpos",
+									["'<"]
+								])) as any[];
+								const finish = (await this.nvim.request("nvim_call_function", [
+									"getpos",
+									["'>"]
+								])) as any[];
+								const sLine = Math.max(0, (start?.[1] ?? 1) - 1);
+								const sCol = Math.max(0, (start?.[2] ?? 1) - 1);
+								const eLine = Math.max(0, (finish?.[1] ?? 1) - 1);
+								const eCol = Math.max(0, (finish?.[2] ?? 1) - 1);
+								if (sLine === eLine && sCol === eCol) return null;
+								const startPos = { line: Math.min(sLine, eLine), col: Math.min(sCol, eCol) };
+								const endPos = { line: Math.max(sLine, eLine), col: Math.max(sCol, eCol) };
+								return { start: startPos, end: endPos, mode };
+							} catch (e) {
+								this.log.warn("getVisualSelection failed", { err: (e as any)?.message ?? String(e) });
+								return null;
+							}
+						}
+						async getMode() : Promise<{mode : string, blocking: Boolean}> {
+							try {
+								const [mode, blocking] = await this.nvim.request("nvim_get_mode");
+								return {
+									mode, blocking
+								};
+							} catch (e){
+								this.log.warn("getMode failed", { err: (e as any)?.message ?? String(e) });
+								return {mode: "n", blocking: false};
+							}
+						}
 
-  async getCmdlineState(): Promise<{ type: string; content: string; pos: number }> {
-    try {
-      const [ctype, content, pos] = (await Promise.all([
-        this.nvim.request("nvim_call_function", ["getcmdtype", []]),
-        this.nvim.request("nvim_call_function", ["getcmdline", []]),
-        this.nvim.request("nvim_call_function", ["getcmdpos", []])
-      ])) as [string, string, number];
-      return {
-        type: String(ctype ?? ":"),
-        content: String(content ?? ""),
-        pos: Math.max(0, Number(pos ?? 0) - 1)
-      };
-    } catch (e) {
-      this.log.warn("getCmdlineState failed", { err: (e as any)?.message ?? String(e) });
-      return { type: ":", content: "", pos: 0 };
-    }
-  }
-}
 
-function escapeVimPath(p: string) {
-  return p.replace(/\\/g, "\\\\").replace(/ /g, "\\ ");
-}
+						async getCmdlineState(): Promise<{ type: string; content: string; pos: number }> {
+							try {
+								const [ctype, content, pos] = (await Promise.all([
+									this.nvim.request("nvim_call_function", ["getcmdtype", []]),
+									this.nvim.request("nvim_call_function", ["getcmdline", []]),
+									this.nvim.request("nvim_call_function", ["getcmdpos", []])
+								])) as [string, string, number];
+								return {
+									type: String(ctype ?? ":"),
+									content: String(content ?? ""),
+									pos: Math.max(0, Number(pos ?? 0) - 1)
+								};
+							} catch (e) {
+								this.log.warn("getCmdlineState failed", { err: (e as any)?.message ?? String(e) });
+								return { type: ":", content: "", pos: 0 };
+							}
+						}
+					}
+
+					function escapeVimPath(p: string) {
+						return p.replace(/\\/g, "\\\\").replace(/ /g, "\\ ");
+					}
