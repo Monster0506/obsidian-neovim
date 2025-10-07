@@ -1,7 +1,7 @@
 import { Plugin, Notice, PluginSettingTab, App, Setting } from "obsidian";
 import { join } from "path";
 import { NvimHost } from "@src/nvim";
-import { neovimExtension } from "@src/cm6";
+import { neovimExtension, translateKey } from "@src/cm6";
 import { FileLogger } from "@src/logger";
 import { getActiveEditor, getActiveMarkdownView } from "@src/obsidian-helpers";
 import { EditorBridge } from "@src/bridge";
@@ -221,6 +221,31 @@ export default class NeovimBackendPlugin extends Plugin {
             this.log.debug("obsidian-neovim-input event");
             this.handleKeyDrivenSync();
           });
+          // Capture-level key interception to ensure Neovim receives keys
+          const capture = (e: KeyboardEvent) => {
+            try {
+              // Allow only Ctrl+P to Obsidian
+              if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "P" || e.key === "p")) return;
+              const term = translateKey(e);
+              if (!term) return;
+              e.preventDefault();
+              e.stopPropagation();
+              (e as any).__nvimHandled = true;
+              void this.nvim
+                .input(term)
+                .then(() => this.log.debug("capture nvim.input ok", { term }))
+                .catch((err) => this.log.warn("capture nvim.input failed", { term, err: err?.message ?? String(err) }))
+                .finally(() => {
+                  try {
+                    window.dispatchEvent(new CustomEvent("obsidian-neovim-input", { detail: { term } }));
+                  } catch {}
+                });
+            } catch (err) {
+              this.log.warn("capture key error", { err: (err as any)?.message ?? String(err) });
+            }
+          };
+          window.addEventListener("keydown", capture, { capture: true });
+          this.register(() => window.removeEventListener("keydown", capture, { capture: true } as any));
         } catch (e) {
           this.log.error("initial attempt error", e);
         }

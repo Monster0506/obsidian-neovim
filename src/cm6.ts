@@ -57,6 +57,10 @@ function baseKeyToTermcode(key: string, shift: boolean): string | null {
 function ctrlName(key: string): string {
   if (key.length === 1) {
     const c = key.toLowerCase();
+    // Map common canonical ctrl equivalents used by Vim
+    if (c === "h") return "<BS>"; // Ctrl+H → backspace
+    if (c === "m") return "<CR>"; // Ctrl+M → enter
+    if (c === "[") return "<Esc>"; // Ctrl+[ → escape
     if (c >= "a" && c <= "z") return `<C-${c}>`;
   }
   const specials: Record<string, string> = {
@@ -87,7 +91,7 @@ function altName(key: string, shift: boolean): string {
   return `<M-${key}>`;
 }
 
-function translateKey(e: KeyboardEvent): string | null {
+export function translateKey(e: KeyboardEvent): string | null {
   // Let IME composition flow; handle after composition if desired
   if ((e as any).isComposing) return null;
   if (isModifierOnly(e)) return null;
@@ -156,16 +160,25 @@ export function neovimExtension(nvim: NvimHost): Extension {
     { key: "l", run: routeSimple("l") },
     { key: "i", run: routeSimple("i") },
     { key: "Backspace", run: routeSimple("<BS>") },
-    { key: "Delete", run: routeSimple("<Del>") }
+    { key: "Delete", run: routeSimple("<Del>") },
+    { key: "Enter", run: routeSimple("<CR>") },
+    { key: "Tab", run: routeSimple("<Tab>") },
+    { key: "ArrowUp", run: routeSimple("<Up>") },
+    { key: "ArrowDown", run: routeSimple("<Down>") },
+    { key: "ArrowLeft", run: routeSimple("<Left>") },
+    { key: "ArrowRight", run: routeSimple("<Right>") }
   ]);
 
   const domHandlers = EditorView.domEventHandlers({
     keydown: (e, _view) => {
       try {
-        // Always let Ctrl+Shift+P go to Obsidian's command palette
-        if (e.ctrlKey && e.shiftKey && (e.key === "P" || e.key === "p")) {
-          log(nvim, "debug", "bypass Neovim: Ctrl+Shift+P");
-          return false; // don't prevent; allow Obsidian
+        if ((e as any).__nvimHandled) {
+          return true; // capture handler already did this
+        }
+        // Allow only Ctrl+P to reach Obsidian (command palette)
+        if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "P" || e.key === "p")) {
+          log(nvim, "debug", "bypass Neovim: Ctrl+P");
+          return false; // allow Obsidian
         }
 
         const term = translateKey(e);
@@ -180,7 +193,13 @@ export function neovimExtension(nvim: NvimHost): Extension {
           term === "i" ||
           term === "<Esc>" ||
           term === "<BS>" ||
-          term === "<Del>"
+          term === "<Del>" ||
+          term === "<CR>" ||
+          term === "<Tab>" ||
+          term === "<Up>" ||
+          term === "<Down>" ||
+          term === "<Left>" ||
+          term === "<Right>"
         ) {
           return false;
         }
