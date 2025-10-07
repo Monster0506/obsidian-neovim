@@ -235,5 +235,9 @@ export function neovimExtension(nvim: NvimHost): Extension {
     }
   });
 
+  // Visual selection highlighting removed for now. Previous attempts:
+  // - ViewPlugin + StateField driven by custom events to paint ranges
+  // - Mapping Neovim visual marks to CM6 positions
+  // Cursor stability and rendering consistency need further design.
   return [keys, domHandlers];
 }

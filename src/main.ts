@@ -23,6 +23,7 @@ export default class NeovimBackendPlugin extends Plugin {
   private lastFallbackSyncTs = 0;
   private pendingFallback = false;
   private inputSyncThrottled = false;
+  // Note: Visual selection sync attempts removed for now; see syncVisualSelection()
 
   async onload() {
     const vaultBase =
@@ -131,6 +132,11 @@ export default class NeovimBackendPlugin extends Plugin {
         } catch (e) {
           this.log.error("onRedraw handler error", e);
         }
+      };
+
+      // Mode change: previously used to drive visual selection highlight; disabled for now
+      this.nvim.onModeChange = async (mode) => {
+        this.log.debug("onModeChange", { mode });
       };
 
       // on_lines -> apply precise changes
@@ -441,6 +447,7 @@ export default class NeovimBackendPlugin extends Plugin {
             const lineText = ed.getLine(line) ?? "";
             const ch = Math.max(0, Math.min(pos.col, lineText.length));
             ed.setCursor({ line, ch });
+            // Visual selection highlight disabled for now
           } catch (e) {
             this.log.warn("key-sync cursor error", { err: (e as any)?.message ?? String(e) });
           }
@@ -454,6 +461,18 @@ export default class NeovimBackendPlugin extends Plugin {
       this.log.warn("handleKeyDrivenSync error", { err: (e as any)?.message ?? String(e) });
     }
   }
+
+  // Visual selection sync (disabled)
+  // Attempts tried and removed for now:
+  // - Querying Neovim visual marks via getpos("'<")/getpos("'>") on mode changes and key ticks
+  // - Polling while in visual modes to keep selection updated
+  // - Rendering highlights using CodeMirror 6 decorations (StateField + ViewPlugin)
+  // Issues observed: highlight not reliably rendering, cursor occasionally jumping to EOL.
+  // Next approach to consider: derive CM6 ranges from ext_linegrid highlight ops, or compute
+  // ranges based on actual buffer positions mapped to CM6 doc positions with robust mapping.
+  private async syncVisualSelection() { return; }
+
+  // Visual mode helpers intentionally omitted (see comment above)
 }
 
 class NeovimSettingsTab extends PluginSettingTab {

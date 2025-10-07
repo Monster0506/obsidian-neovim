@@ -17,6 +17,7 @@ export type NvimOptions = {
 export type RedrawHandler = (method: string, args: any[]) => void;
 export type OnLinesHandler = (ev: NvimOnLinesEvent) => void;
 export type OnCursorHandler = (pos: { line: number; col: number }) => void;
+export type OnModeChangeHandler = (mode: string) => void;
 
 export type NvimOnLinesEvent = {
   buf: number;
@@ -42,6 +43,7 @@ export class NvimHost {
   onRedraw?: RedrawHandler;
   onLines?: OnLinesHandler;
   onCursor?: OnCursorHandler;
+  onModeChange?: OnModeChangeHandler;
 
   async start(): Promise<void> {
     await this.log.init();
@@ -190,6 +192,13 @@ export class NvimHost {
               const [m] = t;
               this.mode = String(m ?? "normal");
               this.log.info("mode_change", { mode: this.mode });
+              try {
+                this.onModeChange?.(this.mode);
+              } catch (e) {
+                this.log.warn("onModeChange handler error", {
+                  err: (e as any)?.message ?? String(e)
+                });
+              }
             }
             break;
           }
@@ -323,6 +332,35 @@ export class NvimHost {
         err: (e as any)?.message ?? String(e)
       });
       return "";
+    }
+  }
+
+  async getVisualSelection(): Promise<{
+    start: { line: number; col: number };
+    end: { line: number; col: number };
+    mode: string;
+  } | null> {
+    try {
+      const mode = this.getMode();
+      const start = (await this.nvim.request("nvim_call_function", [
+        "getpos",
+        ["'<"]
+      ])) as any[];
+      const finish = (await this.nvim.request("nvim_call_function", [
+        "getpos",
+        ["'>"]
+      ])) as any[];
+      const sLine = Math.max(0, (start?.[1] ?? 1) - 1);
+      const sCol = Math.max(0, (start?.[2] ?? 1) - 1);
+      const eLine = Math.max(0, (finish?.[1] ?? 1) - 1);
+      const eCol = Math.max(0, (finish?.[2] ?? 1) - 1);
+      if (sLine === eLine && sCol === eCol) return null;
+      const startPos = { line: Math.min(sLine, eLine), col: Math.min(sCol, eCol) };
+      const endPos = { line: Math.max(sLine, eLine), col: Math.max(sCol, eCol) };
+      return { start: startPos, end: endPos, mode };
+    } catch (e) {
+      this.log.warn("getVisualSelection failed", { err: (e as any)?.message ?? String(e) });
+      return null;
     }
   }
 }
