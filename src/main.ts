@@ -7,6 +7,7 @@ import { getActiveEditor, getActiveMarkdownView } from "@src/obsidian-helpers";
 import { EditorBridge } from "@src/bridge";
 import { SyncApplier } from "@src/sync";
 import { DEFAULT_SETTINGS, NeovimSettings } from "@src/settings";
+import { CommandLineModal } from "@src/ui/cmdline";
 
 const PLUGIN_TAG = "[obsidian-neovim]";
 
@@ -24,6 +25,7 @@ export default class NeovimBackendPlugin extends Plugin {
   private pendingFallback = false;
   private inputSyncThrottled = false;
   // Note: Visual selection sync attempts removed for now; see syncVisualSelection()
+  private cmdline?: CommandLineModal;
 
   async onload() {
     const vaultBase =
@@ -139,6 +141,28 @@ export default class NeovimBackendPlugin extends Plugin {
         this.log.debug("onModeChange", { mode });
       };
 
+      // Cmdline overlay wiring
+      this.cmdline = new CommandLineModal(this.app);
+      this.nvim.onCmdline = (ev) => {
+        try {
+          if (ev.type === "show") {
+            this.log.debug("cmdline show", { prompt: ev.prompt, contentLen: ev.content.length, pos: ev.pos });
+            this.cmdline?.update(ev.prompt, ev.content, ev.pos);
+          } else if (ev.type === "pos") {
+            // Future: track content locally and update caret only
+            this.log.debug("cmdline pos", { pos: ev.pos });
+          } else if (ev.type === "hide") {
+            this.log.debug("cmdline hide");
+            this.cmdline?.hideCmdline();
+          } else if (ev.type === "wildmenu") {
+            this.log.debug("cmdline wildmenu", { count: ev.items.length, selected: ev.selected });
+            this.cmdline?.updateWildmenu(ev.items, ev.selected);
+          }
+        } catch (e) {
+          this.log.warn("cmdline overlay error", { err: (e as any)?.message ?? String(e) });
+        }
+      };
+
       // on_lines -> apply precise changes
       this.nvim.onLines = (ev) => {
         this.log.debug("onLines received", {
@@ -234,6 +258,12 @@ export default class NeovimBackendPlugin extends Plugin {
               if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "P" || e.key === "p")) return;
               const term = translateKey(e);
               if (!term) return;
+              // Open cmdline modal immediately on ':' or search ('/' or '?')
+              if (term === ":") {
+                this.cmdline?.update(":", "", 0);
+              } else if (term === "/" || term === "?") {
+                this.cmdline?.update(term, "", 0);
+              }
               e.preventDefault();
               e.stopPropagation();
               (e as any).__nvimHandled = true;

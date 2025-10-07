@@ -1,3 +1,30 @@
+.nvim-cmdline-overlay {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 6px 10px;
+  background: var(--background-secondary);
+  border-top: 1px solid var(--background-modifier-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 1000;
+}
+.nvim-cmdline-overlay.is-hidden { display: none; }
+.nvim-cmdline-row { display: flex; gap: 6px; align-items: center; }
+.nvim-cmdline-prompt { color: var(--text-muted); min-width: 1em; }
+.nvim-cmdline-input { flex: 1; white-space: pre; font-family: var(--font-monospace); }
+.nvim-cmdline-cursor { display: inline-block; width: 7px; background: var(--text-accent); }
+.nvim-cmdline-wildmenu { display: flex; gap: 8px; flex-wrap: wrap; }
+.nvim-cmdline-wilditem { padding: 2px 6px; border-radius: 4px; background: var(--background-modifier-form-field); }
+.nvim-cmdline-wilditem.is-selected { background: var(--background-modifier-accent); color: var(--text-on-accent); }
+
+/* Modal variant */
+.modal .nvim-cmdline-row { display: flex; gap: 6px; align-items: center; }
+.modal .nvim-cmdline-prompt { color: var(--text-muted); min-width: 1em; }
+.modal .nvim-cmdline-input { flex: 1; white-space: pre; font-family: var(--font-monospace); }
+
 /*
 
 This CSS file will be included with your plugin, and

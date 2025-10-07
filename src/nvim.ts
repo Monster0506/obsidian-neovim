@@ -18,6 +18,12 @@ export type RedrawHandler = (method: string, args: any[]) => void;
 export type OnLinesHandler = (ev: NvimOnLinesEvent) => void;
 export type OnCursorHandler = (pos: { line: number; col: number }) => void;
 export type OnModeChangeHandler = (mode: string) => void;
+export type OnCmdlineEvent =
+  | { type: "show"; content: string; prompt: string; pos: number; level: number }
+  | { type: "pos"; pos: number }
+  | { type: "hide" }
+  | { type: "special"; char: string }
+  | { type: "wildmenu"; items: string[]; selected: number };
 
 export type NvimOnLinesEvent = {
   buf: number;
@@ -44,6 +50,7 @@ export class NvimHost {
   onLines?: OnLinesHandler;
   onCursor?: OnCursorHandler;
   onModeChange?: OnModeChangeHandler;
+  onCmdline?: (ev: OnCmdlineEvent) => void;
 
   async start(): Promise<void> {
     await this.log.init();
@@ -216,6 +223,68 @@ export class NvimHost {
                   });
                 }
               });
+            }
+            break;
+          }
+          case "cmdline_show": {
+            // [content, pos, level, prompt, indent, separator]
+            for (const t of tuples) {
+              try {
+                const [content, pos, level, prompt] = t as [any[], number, number, string];
+                const text = (content || []).map((seg: any[]) => String(seg?.[0] ?? "")).join("");
+                this.onCmdline?.({ type: "show", content: text, prompt: String(prompt ?? ":"), pos: Number(pos ?? 0), level: Number(level ?? 0) });
+              } catch (e) {
+                this.log.warn("cmdline_show parse failed", { err: (e as any)?.message ?? String(e) });
+              }
+            }
+            break;
+          }
+          case "cmdline_pos": {
+            for (const t of tuples) {
+              try {
+                const [pos] = t as [number];
+                this.onCmdline?.({ type: "pos", pos: Number(pos ?? 0) });
+              } catch (e) {
+                this.log.warn("cmdline_pos parse failed", { err: (e as any)?.message ?? String(e) });
+              }
+            }
+            break;
+          }
+          case "cmdline_hide": {
+            this.onCmdline?.({ type: "hide" });
+            break;
+          }
+          case "cmdline_special_char": {
+            for (const t of tuples) {
+              try {
+                const [ch] = t as [string];
+                this.onCmdline?.({ type: "special", char: String(ch ?? "") });
+              } catch (e) {
+                this.log.warn("cmdline_special_char parse failed", { err: (e as any)?.message ?? String(e) });
+              }
+            }
+            break;
+          }
+          case "wildmenu_show": {
+            for (const t of tuples) {
+              try {
+                const [items] = t as [any[]];
+                const list = (items || []).map((seg) => String(seg?.[0] ?? seg ?? ""));
+                this.onCmdline?.({ type: "wildmenu", items: list, selected: 0 });
+              } catch (e) {
+                this.log.warn("wildmenu_show parse failed", { err: (e as any)?.message ?? String(e) });
+              }
+            }
+            break;
+          }
+          case "wildmenu_select": {
+            for (const t of tuples) {
+              try {
+                const [selected] = t as [number];
+                this.onCmdline?.({ type: "wildmenu", items: [], selected: Number(selected ?? 0) });
+              } catch (e) {
+                this.log.warn("wildmenu_select parse failed", { err: (e as any)?.message ?? String(e) });
+              }
             }
             break;
           }
