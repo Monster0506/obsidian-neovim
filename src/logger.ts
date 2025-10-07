@@ -95,6 +95,14 @@ export class FileLogger {
       d.getSeconds()
     )}.${String(d.getMilliseconds()).padStart(3, "0")}`;
   }
+
+  getLogDirectory(): string {
+    return this.logDir;
+  }
+
+  getLogFilePath(): string {
+    return this.logFile;
+  }
 }
 
 function safeJson(v: any): string {

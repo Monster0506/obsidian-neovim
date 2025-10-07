@@ -1,10 +1,11 @@
-import { Plugin, Notice } from "obsidian";
+import { Plugin, Notice, PluginSettingTab, App, Setting } from "obsidian";
 import { NvimHost } from "@src/nvim";
 import { neovimExtension } from "@src/cm6";
 import { FileLogger } from "@src/logger";
 import { getActiveEditor, getActiveMarkdownView } from "@src/obsidian-helpers";
 import { EditorBridge } from "@src/bridge";
 import { SyncApplier } from "@src/sync";
+import { DEFAULT_SETTINGS, NeovimSettings } from "@src/settings";
 
 const PLUGIN_TAG = "[obsidian-neovim]";
 
@@ -16,12 +17,17 @@ export default class NeovimBackendPlugin extends Plugin {
   private layoutReadyLogged = false;
   private sync!: SyncApplier;
   private attachedBuf: number | null = null;
+  settings!: NeovimSettings;
 
   async onload() {
     this.log = new FileLogger(this.app, PLUGIN_TAG);
     await this.log.init();
     this.bridge = new EditorBridge(this.app);
     this.sync = new SyncApplier(this.bridge, this.log);
+
+    // Load settings
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.addSettingTab(new NeovimSettingsTab(this.app, this));
 
     try {
       this.log.info("Loading Obsidian Neovim Backend POC", {
@@ -42,7 +48,53 @@ export default class NeovimBackendPlugin extends Plugin {
         }
       });
 
-      await this.startNvim();
+      // Commands
+      this.addCommand({
+        id: "obsidian-neovim-restart",
+        name: "Restart Neovim",
+        callback: async () => {
+          try {
+            await this.restartNvim();
+            new Notice("Neovim restarted");
+          } catch (e) {
+            this.log.error("Restart error", e);
+            new Notice("Failed to restart Neovim (see log file)");
+          }
+        }
+      });
+
+      this.addCommand({
+        id: "obsidian-neovim-toggle",
+        name: "Toggle enable",
+        callback: async () => {
+          this.settings.enabled = !this.settings.enabled;
+          await this.saveData(this.settings);
+          if (this.settings.enabled) {
+            await this.startNvim();
+            await this.syncActiveEditorToNvim();
+            new Notice("Obsidian Neovim enabled");
+          } else {
+            await this.nvim?.stop();
+            new Notice("Obsidian Neovim disabled");
+          }
+        }
+      });
+
+      this.addCommand({
+        id: "obsidian-neovim-open-log-path",
+        name: "Show log file path",
+        callback: () => {
+          const p = this.log.getLogFilePath();
+          new Notice(`Log: ${p}`);
+          this.log.info("Log path requested", { path: p });
+        }
+      });
+
+      if (this.settings.enabled) {
+        await this.startNvim();
+      } else {
+        this.log.info("Plugin disabled via settings; not starting Neovim");
+      }
 
       // Redraw hookup (mode logs handled in NvimHost)
       this.log.info("Hooking nvim.onRedraw");
@@ -186,7 +238,15 @@ export default class NeovimBackendPlugin extends Plugin {
   private async startNvim() {
     this.log.info("startNvim begin");
     try {
-      this.nvim = new NvimHost(this.app, {}, this.log);
+      this.nvim = new NvimHost(
+        this.app,
+        {
+          nvimPath: this.settings.nvimPath || "nvim",
+          initLuaPath: this.settings.initLuaPath || "",
+          pluginDir: (this.manifest as any)?.dir || (this.app as any)?.vault?.adapter?.basePath || ""
+        },
+        this.log
+      );
       await this.nvim.start();
       this.log.info("startNvim ok");
     } catch (e) {
@@ -265,5 +325,54 @@ export default class NeovimBackendPlugin extends Plugin {
       new Notice("Failed to sync editor to Neovim (see log file)");
       throw e;
     }
+  }
+}
+
+class NeovimSettingsTab extends PluginSettingTab {
+  constructor(app: App, private plugin: NeovimBackendPlugin) {
+    super(app, plugin);
+  }
+
+  display(): void {
+    const { containerEl } = this;
+    containerEl.empty();
+
+    containerEl.createEl("h2", { text: "Obsidian Neovim" });
+
+    new Setting(containerEl)
+      .setName("Enable plugin")
+      .setDesc("Start and use Neovim for editing")
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.settings.enabled).onChange(async (v) => {
+          this.plugin.settings.enabled = v;
+          await this.plugin.saveData(this.plugin.settings);
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Neovim path")
+      .setDesc("Executable to launch (e.g., nvim)")
+      .addText((text) => {
+        text
+          .setPlaceholder("nvim")
+          .setValue(this.plugin.settings.nvimPath)
+          .onChange(async (value) => {
+            this.plugin.settings.nvimPath = value.trim();
+            await this.plugin.saveData(this.plugin.settings);
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("Init Lua path")
+      .setDesc("Absolute path to host-init.lua. Leave empty to use bundled default.")
+      .addText((text) => {
+        text
+          .setPlaceholder("")
+          .setValue(this.plugin.settings.initLuaPath)
+          .onChange(async (value) => {
+            this.plugin.settings.initLuaPath = value.trim();
+            await this.plugin.saveData(this.plugin.settings);
+          });
+      });
   }
 }

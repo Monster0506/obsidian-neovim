@@ -6,7 +6,8 @@ import { FileLogger } from "@src/logger";
 
 export type NvimOptions = {
   nvimPath?: string;
-  initLuaPath?: string;
+  initLuaPath?: string; // absolute path; if empty, we use plugin's assets/host-init.lua
+  pluginDir?: string; // absolute plugin directory path (for defaults)
 };
 
 export type RedrawHandler = (method: string, args: any[]) => void;
@@ -43,9 +44,13 @@ export class NvimHost {
     this.log.info("NvimHost.start() begin", { opts: this.opts });
 
     const nvimPath = this.opts.nvimPath ?? "nvim";
-    const initLua =
-      this.opts.initLuaPath ??
-      join((this.app as any).vault.adapter.basePath || "", "host-init.lua");
+    let initLua = this.opts.initLuaPath;
+    if (!initLua) {
+      // Default to the plugin's bundled assets/host-init.lua
+      // pluginDir should be passed in from the plugin entry to avoid vault-root assumptions
+      const base = this.opts.pluginDir || ((this.app as any).vault?.adapter?.basePath ?? "");
+      initLua = join(base, "assets", "host-init.lua");
+    }
 
     const args = ["--embed", "-u", "NONE", "-n"];
     args.push("-c", `lua dofile('${initLua.replace(/\\/g, "\\\\")}')`);
