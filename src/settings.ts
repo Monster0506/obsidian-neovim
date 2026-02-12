@@ -7,6 +7,11 @@ export interface NeovimSettings {
   externalSocketPath: string; // e.g., /tmp/nvim-obsidian.sock
   externalHost: string; // e.g., 127.0.0.1
   externalPort: number; // e.g., 8000
+  // Debug and performance settings
+  debugMode: boolean; // Enable detailed debug logging
+  showMetrics: boolean; // Show performance metrics in status bar
+  autoReconnect: boolean; // Automatically reconnect on connection loss
+  maxReconnectAttempts: number; // Maximum reconnection attempts
 }
 
 export const DEFAULT_SETTINGS: NeovimSettings = {
@@ -17,6 +22,10 @@ export const DEFAULT_SETTINGS: NeovimSettings = {
   externalSocketPath: "",
   externalHost: "127.0.0.1",
   externalPort: 8000,
+  debugMode: false,
+  showMetrics: false,
+  autoReconnect: true,
+  maxReconnectAttempts: 5,
 };
 
 
