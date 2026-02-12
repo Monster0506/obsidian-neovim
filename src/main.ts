@@ -1,4 +1,4 @@
-import { Plugin, Notice, PluginSettingTab, App, Setting } from "obsidian";
+import { Plugin, Notice, PluginSettingTab, App, Setting, Modal } from "obsidian";
 import { join } from "path";
 import { NvimHost } from "@src/nvim";
 import { neovimExtension, translateKey } from "@src/cm6";
@@ -8,6 +8,13 @@ import { EditorBridge } from "@src/bridge";
 import { SyncApplier } from "@src/sync";
 import { DEFAULT_SETTINGS, NeovimSettings } from "@src/settings";
 import { CommandLineModal } from "@src/ui/cmdline";
+import {
+  RegistersManager,
+  MarksManager,
+  SearchManager,
+  JumpListManager,
+  MacroManager
+} from "@src/vim-features";
 
 const PLUGIN_TAG = "[obsidian-neovim]";
 
@@ -27,6 +34,13 @@ export default class NeovimBackendPlugin extends Plugin {
   // Note: Visual selection sync attempts removed for now; see syncVisualSelection()
   private cmdline?: CommandLineModal;
   private cmdPollId: number | null = null;
+
+  // Vim feature managers
+  private registers!: RegistersManager;
+  private marks!: MarksManager;
+  private search!: SearchManager;
+  private jumpList!: JumpListManager;
+  private macros!: MacroManager;
 
   async onload() {
     const vaultBase =
@@ -184,6 +198,79 @@ export default class NeovimBackendPlugin extends Plugin {
           } catch (e) {
             this.log.error("Reconnect error", e);
             new Notice("Failed to reconnect (see log file)");
+          }
+        }
+      });
+
+      // Vim features commands
+      this.addCommand({
+        id: "obsidian-neovim-show-registers",
+        name: "Show registers",
+        callback: async () => {
+          if (!this.registers) {
+            new Notice("Neovim not started");
+            return;
+          }
+          try {
+            const regs = await this.registers.getAllRegisters();
+            new RegistersModal(this.app, regs).open();
+          } catch (e) {
+            this.log.error("Show registers error", e);
+            new Notice("Failed to get registers");
+          }
+        }
+      });
+
+      this.addCommand({
+        id: "obsidian-neovim-show-marks",
+        name: "Show marks",
+        callback: async () => {
+          if (!this.marks) {
+            new Notice("Neovim not started");
+            return;
+          }
+          try {
+            const marks = await this.marks.getAllMarks();
+            new MarksModal(this.app, marks, this.marks).open();
+          } catch (e) {
+            this.log.error("Show marks error", e);
+            new Notice("Failed to get marks");
+          }
+        }
+      });
+
+      this.addCommand({
+        id: "obsidian-neovim-show-jumplist",
+        name: "Show jump list",
+        callback: async () => {
+          if (!this.jumpList) {
+            new Notice("Neovim not started");
+            return;
+          }
+          try {
+            const { jumps, current } = await this.jumpList.getJumpList();
+            new JumpListModal(this.app, jumps, current).open();
+          } catch (e) {
+            this.log.error("Show jump list error", e);
+            new Notice("Failed to get jump list");
+          }
+        }
+      });
+
+      this.addCommand({
+        id: "obsidian-neovim-clear-search",
+        name: "Clear search highlights",
+        callback: async () => {
+          if (!this.search) {
+            new Notice("Neovim not started");
+            return;
+          }
+          try {
+            await this.search.clearSearch();
+            new Notice("Search cleared");
+          } catch (e) {
+            this.log.error("Clear search error", e);
+            new Notice("Failed to clear search");
           }
         }
       });
@@ -458,6 +545,14 @@ export default class NeovimBackendPlugin extends Plugin {
         this.log
       );
       await this.nvim.start();
+
+      // Initialize Vim feature managers
+      this.registers = new RegistersManager(this.nvim, this.log);
+      this.marks = new MarksManager(this.nvim, this.log);
+      this.search = new SearchManager(this.nvim, this.log);
+      this.jumpList = new JumpListManager(this.nvim, this.log);
+      this.macros = new MacroManager(this.nvim, this.log);
+
       this.log.info("startNvim ok");
     } catch (e) {
       this.log.error("startNvim error", e);
@@ -747,5 +842,108 @@ class NeovimSettingsTab extends PluginSettingTab {
             await this.plugin.saveData(this.plugin.settings);
           });
       });
+  }
+}
+
+// Modals for Vim features
+import type { VimRegister, VimMark, JumpEntry } from "@src/vim-features";
+
+class RegistersModal extends Modal {
+  constructor(app: App, private registers: VimRegister[]) {
+    super(app);
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Vim Registers" });
+
+    if (this.registers.length === 0) {
+      contentEl.createEl("p", { text: "No registers with content" });
+      return;
+    }
+
+    const container = contentEl.createDiv({ cls: "vim-registers-list" });
+    for (const reg of this.registers) {
+      const item = container.createDiv({ cls: "vim-register-item" });
+      const header = item.createDiv({ cls: "vim-register-header" });
+      header.createEl("strong", { text: `"${reg.name}` });
+      header.createEl("span", { text: ` (${reg.type === "l" ? "line" : reg.type === "b" ? "block" : "char"})` });
+
+      const content = item.createEl("pre", { cls: "vim-register-content" });
+      content.textContent = reg.content.join("\n");
+    }
+  }
+
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+}
+
+class MarksModal extends Modal {
+  constructor(app: App, private marks: VimMark[], private marksManager: MarksManager) {
+    super(app);
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Vim Marks" });
+
+    if (this.marks.length === 0) {
+      contentEl.createEl("p", { text: "No marks set" });
+      return;
+    }
+
+    const container = contentEl.createDiv({ cls: "vim-marks-list" });
+    for (const mark of this.marks) {
+      const item = container.createDiv({ cls: "vim-mark-item" });
+      const text = `'${mark.name} → Line ${mark.line + 1}, Col ${mark.col + 1}${mark.file ? ` (${mark.file})` : ""}`;
+      const btn = item.createEl("button", { text });
+      btn.addEventListener("click", async () => {
+        await this.marksManager.jumpToMark(mark.name);
+        this.close();
+      });
+    }
+  }
+
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+}
+
+class JumpListModal extends Modal {
+  constructor(app: App, private jumps: JumpEntry[], private current: number) {
+    super(app);
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Jump List" });
+
+    if (this.jumps.length === 0) {
+      contentEl.createEl("p", { text: "Jump list is empty" });
+      return;
+    }
+
+    const container = contentEl.createDiv({ cls: "vim-jumplist" });
+    for (let i = 0; i < this.jumps.length; i++) {
+      const jump = this.jumps[i];
+      const item = container.createDiv({ cls: "vim-jump-item" });
+      if (i === this.current) {
+        item.addClass("is-current");
+      }
+
+      const text = `${i === this.current ? ">" : " "} Line ${jump.line + 1}, Col ${jump.col + 1}${jump.file ? ` (${jump.file})` : ""}`;
+      item.createEl("div", { text });
+    }
+  }
+
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
   }
 }
