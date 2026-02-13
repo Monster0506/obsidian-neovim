@@ -25,6 +25,74 @@
 .modal .nvim-cmdline-prompt { color: var(--text-muted); min-width: 1em; }
 .modal .nvim-cmdline-input { flex: 1; white-space: pre; font-family: var(--font-monospace); }
 
+/* Vim features modals */
+.vim-registers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.vim-register-item {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.vim-register-header {
+  margin-bottom: 6px;
+  color: var(--text-muted);
+}
+
+.vim-register-content {
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+  background: var(--background-secondary);
+  padding: 8px;
+  border-radius: 4px;
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.vim-marks-list,
+.vim-jumplist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.vim-mark-item button {
+  width: 100%;
+  padding: 8px 12px;
+  text-align: left;
+  background: var(--background-modifier-form-field);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--font-monospace);
+  color: var(--text-normal);
+}
+
+.vim-mark-item button:hover {
+  background: var(--background-modifier-hover);
+}
+
+.vim-jump-item {
+  padding: 6px 12px;
+  font-family: var(--font-monospace);
+  border-left: 3px solid transparent;
+}
+
+.vim-jump-item.is-current {
+  background: var(--background-modifier-hover);
+  border-left-color: var(--text-accent);
+  font-weight: bold;
+}
+
 /*
 
 This CSS file will be included with your plugin, and
